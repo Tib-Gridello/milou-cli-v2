@@ -1,0 +1,387 @@
+#!/bin/bash
+# docker.sh - Docker operations and management
+# Handles docker-compose operations with proper error handling
+
+source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/ghcr.sh"
+
+#=============================================================================
+# Helper Functions
+#=============================================================================
+
+# Run docker compose command with v2/v1 compatibility
+docker_compose() {
+    if command -v docker-compose >/dev/null 2>&1; then
+        docker-compose "$@"
+    else
+        docker compose "$@"
+    fi
+}
+
+# Lazy load backup module to avoid circular dependency
+load_backup_module() {
+    if [[ "${BACKUP_MODULE_LOADED:-}" != "true" ]]; then
+        source "$(dirname "${BASH_SOURCE[0]}")/backup.sh"
+        export BACKUP_MODULE_LOADED="true"
+    fi
+}
+
+#=============================================================================
+# Docker Operations
+#=============================================================================
+
+# Determine which compose file to use based on environment
+docker_get_compose_file() {
+    local env="${MILOU_ENV:-}"
+
+    # If no environment specified, auto-detect from NODE_ENV
+    if [[ -z "$env" ]]; then
+        local node_env=$(env_get "NODE_ENV" 2>/dev/null || echo "production")
+        [[ "$node_env" == "development" ]] && env="dev" || env="prod"
+    fi
+
+    # Check for environment-specific compose file
+    local compose_file=""
+
+    case "$env" in
+        dev|development)
+            if [[ -f "${SCRIPT_DIR}/docker-compose.dev.yml" ]]; then
+                compose_file="${SCRIPT_DIR}/docker-compose.dev.yml"
+            else
+                compose_file="${SCRIPT_DIR}/docker-compose.yml"
+            fi
+            ;;
+        prod|production)
+            # Check for production.yml first (legacy), then docker-compose.prod.yml
+            if [[ -f "${SCRIPT_DIR}/production.yml" ]]; then
+                compose_file="${SCRIPT_DIR}/production.yml"
+            elif [[ -f "${SCRIPT_DIR}/docker-compose.prod.yml" ]]; then
+                compose_file="${SCRIPT_DIR}/docker-compose.prod.yml"
+            else
+                compose_file="${SCRIPT_DIR}/docker-compose.yml"
+            fi
+            ;;
+        *)
+            # Default to docker-compose.yml
+            compose_file="${SCRIPT_DIR}/docker-compose.yml"
+            ;;
+    esac
+
+    echo "$compose_file"
+}
+
+# Check if Docker is installed and running
+docker_check() {
+    # log_debug "Checking Docker installation..."
+
+    command -v docker &>/dev/null || die "Docker is not installed. Please install Docker first."
+    # Check for docker compose (v2) or docker-compose (v1)
+    if ! command -v docker-compose &>/dev/null && ! docker compose version &>/dev/null; then
+        die "docker compose is not installed. Please install docker-compose or docker compose plugin."
+    fi
+
+    # Check if Docker daemon is running
+    docker info &>/dev/null || die "Docker daemon is not running. Please start Docker."
+
+    # log_debug "Docker is ready"
+    return 0
+}
+
+# Start Milou services
+docker_start() {
+    local compose_file=$(docker_get_compose_file)
+
+    log_info "Starting Milou services..."
+    log_debug "Using compose file: $compose_file"
+
+    docker_check
+    [[ -f "$compose_file" ]] || die "Compose file not found: $compose_file"
+    [[ -f "${SCRIPT_DIR}/.env" ]] || die ".env file not found. Run 'milou setup' first."
+
+    # Verify .env has ENGINE_URL
+    local engine_url=$(env_get "ENGINE_URL")
+    [[ -z "$engine_url" ]] && {
+        log_warn "ENGINE_URL not found in .env, running migration..."
+        env_migrate
+    }
+
+    # Ensure GHCR authentication if using GHCR images
+    if ! ghcr_is_authenticated; then
+        log_debug "Attempting GHCR authentication..."
+        ghcr_ensure_auth "" "true"  # Quiet mode, don't fail if no token
+    fi
+
+    # Start services
+    cd "$SCRIPT_DIR" || die "Failed to change directory"
+    docker_compose -f "$compose_file" up -d || die "Failed to start services"
+
+    log_success "Milou services started successfully"
+    docker_status
+
+    return 0
+}
+
+# Stop Milou services
+docker_stop() {
+    local compose_file=$(docker_get_compose_file)
+
+    log_info "Stopping Milou services..."
+
+    docker_check
+    [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
+
+    cd "$SCRIPT_DIR" || die "Failed to change directory"
+
+    docker_compose -f "$compose_file" down || die "Failed to stop services"
+
+    log_success "Milou services stopped successfully"
+    return 0
+}
+
+# Restart Milou services
+docker_restart() {
+    log_info "Restarting Milou services..."
+
+    docker_stop
+    sleep 2
+    docker_start
+
+    return 0
+}
+
+# Show service status
+docker_status() {
+    local compose_file=$(docker_get_compose_file)
+
+    docker_check
+    [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
+
+    cd "$SCRIPT_DIR" || die "Failed to change directory"
+    docker_compose -f "$compose_file" ps || true
+
+    return 0
+}
+
+# Show service logs
+docker_logs() {
+    local service="${1:-}"
+    local compose_file=$(docker_get_compose_file)
+
+    docker_check
+    [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
+
+    cd "$SCRIPT_DIR" || die "Failed to change directory"
+
+    if [[ -z "$service" ]]; then
+        docker_compose -f "$compose_file" logs --tail=100 -f
+    else
+        docker_compose -f "$compose_file" logs --tail=100 -f "$service"
+    fi
+
+    return 0
+}
+
+# Pull images with optional version selection
+docker_pull() {
+    local target_version="${1:-}"
+    local compose_file=$(docker_get_compose_file)
+
+    docker_check
+    [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
+
+    # Ensure GHCR authentication before pulling
+    if ! ghcr_is_authenticated; then
+        log_info "Authenticating with GitHub Container Registry..."
+        if ! ghcr_ensure_auth "" "false"; then
+            log_warn "GHCR authentication failed - some images may not be accessible"
+            log_info "Set GHCR_TOKEN in .env or run 'milou ghcr setup'"
+        fi
+    fi
+
+    # If version specified, update .env before pulling
+    if [[ -n "$target_version" ]]; then
+        local current_version=$(env_get "MILOU_VERSION" 2>/dev/null || echo "latest")
+        if [[ "$current_version" != "$target_version" ]]; then
+            log_info "Updating MILOU_VERSION: $current_version → $target_version"
+            env_set "MILOU_VERSION" "$target_version"
+        fi
+        log_info "Pulling Docker images for version: $target_version..."
+    else
+        local current_version=$(env_get "MILOU_VERSION" 2>/dev/null || echo "latest")
+        log_info "Pulling Docker images for version: $current_version..."
+    fi
+
+    cd "$SCRIPT_DIR" || die "Failed to change directory"
+    docker_compose -f "$compose_file" pull || die "Failed to pull images"
+
+    log_success "Docker images updated successfully"
+    return 0
+}
+
+# Rebuild services
+docker_build() {
+    local compose_file=$(docker_get_compose_file)
+
+    log_info "Building Docker images..."
+
+    docker_check
+    [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
+
+    cd "$SCRIPT_DIR" || die "Failed to change directory"
+    docker_compose -f "$compose_file" build || die "Failed to build images"
+
+    log_success "Docker images built successfully"
+    return 0
+}
+
+# Clean up Docker resources
+docker_clean() {
+    log_warn "Cleaning up Docker resources..."
+
+    docker_check
+
+    # Stop services first
+    docker_stop 2>/dev/null || true
+
+    # Remove stopped containers
+    log_info "Removing stopped containers..."
+    docker container prune -f || log_warn "Failed to remove containers"
+
+    # Remove unused images
+    log_info "Removing unused images..."
+    docker image prune -f || log_warn "Failed to remove images"
+
+    # Remove unused volumes
+    log_info "Removing unused volumes..."
+    docker volume prune -f || log_warn "Failed to remove volumes"
+
+    # Remove unused networks
+    log_info "Removing unused networks..."
+    docker network prune -f || log_warn "Failed to remove networks"
+
+    log_success "Docker cleanup completed"
+    return 0
+}
+
+# Update Milou (pull images and restart)
+docker_update() {
+    local skip_backup="${1:-false}"
+
+    log_info "Updating Milou..."
+
+    # Ensure ENGINE_URL exists
+    local engine_url=$(env_get "ENGINE_URL" 2>/dev/null || echo "")
+    [[ -z "$engine_url" ]] && {
+        log_info "Migrating .env to include ENGINE_URL..."
+        env_migrate
+    }
+
+    # Create backup before update (unless skipped)
+    if [[ "$skip_backup" != "true" ]] && [[ "$skip_backup" != "--no-backup" ]]; then
+        log_info "Creating pre-update backup..."
+        load_backup_module
+        backup_create "pre_update_$(date +%Y%m%d_%H%M%S)" || \
+            log_warn "Backup failed, but continuing with update"
+    else
+        log_warn "Skipping backup (--no-backup flag used)"
+    fi
+
+    # Pull latest images
+    docker_pull
+
+    # Restart services
+    docker_restart
+
+    log_success "Milou updated successfully"
+    log_info "Backup available in: ${SCRIPT_DIR}/backups/"
+    return 0
+}
+
+# Run database migrations
+db_migrate() {
+    local compose_file=$(docker_get_compose_file)
+
+    log_info "Running database migrations..."
+
+    docker_check
+    [[ -f "$compose_file" ]] || die "Compose file not found: $compose_file"
+    [[ -f "${SCRIPT_DIR}/.env" ]] || die ".env file not found. Run 'milou setup' first."
+
+    cd "$SCRIPT_DIR" || die "Failed to change directory"
+
+    # Run the database-migrations service with the profile
+    if docker_compose -f "$compose_file" --profile database-migrations up database-migrations --remove-orphans --abort-on-container-exit --exit-code-from database-migrations; then
+        log_success "Database migrations completed successfully"
+        # Bring down the migration service
+        docker_compose -f "$compose_file" --profile database-migrations down database-migrations 2>/dev/null || true
+        return 0
+    else
+        log_error "Database migrations failed"
+        # Bring down the migration service even on failure
+        docker_compose -f "$compose_file" --profile database-migrations down database-migrations 2>/dev/null || true
+        return 1
+    fi
+}
+
+# Command handler for 'milou db' operations
+db_manage() {
+    local action="${1:-}"
+    shift
+
+    case "$action" in
+        migrate)
+            db_migrate "$@"
+            ;;
+        *)
+            die "Invalid db action: $action. Use: migrate"
+            ;;
+    esac
+}
+
+# Command handler for 'milou docker' operations
+docker_manage() {
+    local action="${1:-}"
+    shift
+
+    case "$action" in
+        start)
+            docker_start "$@"
+            ;;
+        stop)
+            docker_stop "$@"
+            ;;
+        restart)
+            docker_restart "$@"
+            ;;
+        status)
+            docker_status "$@"
+            ;;
+        logs)
+            docker_logs "$@"
+            ;;
+        pull)
+            docker_pull "$@"
+            ;;
+        build)
+            docker_build "$@"
+            ;;
+        clean)
+            docker_clean "$@"
+            ;;
+        update)
+            docker_update "$@"
+            ;;
+        *)
+            die "Invalid docker action: $action. Use: start, stop, restart, status, logs, pull, build, clean, update"
+            ;;
+    esac
+}
+
+#=============================================================================
+# Exports
+#=============================================================================
+
+# export -f docker_get_compose_file docker_check docker_start docker_stop docker_restart docker_status docker_logs docker_pull docker_build docker_clean docker_update docker_manage
+
+# log_debug "Docker module loaded"
