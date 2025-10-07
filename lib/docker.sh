@@ -132,7 +132,7 @@ docker_start() {
     # Start database first
     docker_compose $compose_args up -d database || die "Failed to start database"
 
-    # Wait for database to be healthy before running migrations
+    # Wait for database to be healthy
     log_info "Waiting for database..."
     local max_attempts=30
     local attempt=0
@@ -144,9 +144,13 @@ docker_start() {
         ((attempt++))
     done
 
-    # Always attempt migrations (they will skip if nothing to do)
-    log_info "Running database migrations..."
-    db_migrate >/dev/null 2>&1 || log_debug "Migrations check completed"
+    # Skip migrations unless explicitly requested via environment variable
+    if [[ "${RUN_MIGRATIONS_ON_START:-false}" == "true" ]]; then
+        log_info "Running database migrations..."
+        db_migrate >/dev/null 2>&1 || log_debug "Migrations check completed"
+    else
+        log_debug "Skipping migrations (set RUN_MIGRATIONS_ON_START=true to enable)"
+    fi
 
     # Start remaining services (explicitly include nginx to ensure it starts)
     docker_compose $compose_args up -d redis rabbitmq backend frontend engine nginx pgadmin || die "Failed to start services"
