@@ -75,14 +75,22 @@ docker_get_compose_file() {
 docker_check() {
     # log_debug "Checking Docker installation..."
 
-    command -v docker &>/dev/null || die "Docker is not installed. Please install Docker first."
+    if ! command -v docker &>/dev/null; then
+        die "Docker is not installed. Install: https://docs.docker.com/get-docker/"
+    fi
+
     # Check for docker compose (v2) or docker-compose (v1)
     if ! command -v docker-compose &>/dev/null && ! docker compose version &>/dev/null; then
-        die "docker compose is not installed. Please install docker-compose or docker compose plugin."
+        die "docker-compose is not installed. Install: apt install docker-compose-plugin"
     fi
 
     # Check if Docker daemon is running
-    docker info &>/dev/null || die "Docker daemon is not running. Please start Docker."
+    if ! docker info &>/dev/null 2>&1; then
+        log_error "Docker daemon is not running"
+        log_info "Start: sudo systemctl start docker"
+        log_info "Enable: sudo systemctl enable docker"
+        die "Docker must be running"
+    fi
 
     # log_debug "Docker is ready"
     return 0
@@ -379,9 +387,5 @@ docker_manage() {
 }
 
 #=============================================================================
-# Exports
+# Module loaded successfully
 #=============================================================================
-
-# export -f docker_get_compose_file docker_check docker_start docker_stop docker_restart docker_status docker_logs docker_pull docker_build docker_clean docker_update docker_manage
-
-# log_debug "Docker module loaded"

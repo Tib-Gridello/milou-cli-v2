@@ -33,20 +33,35 @@ A **complete rewrite** of the Milou CLI tool, focused on **security**, **simplic
 git clone <repository> milou-cli-v2
 cd milou-cli-v2
 
-# 2. Run setup wizard
+# 2. Run setup wizard (checks prerequisites, guides you through config)
 ./milou setup
 
-# The wizard will guide you through:
-# - Environment configuration (dev/production)
-# - Database credentials (auto-generated)
-# - Redis & RabbitMQ setup (auto-generated)
-# - GHCR token (for pulling images)
-# - SSL certificate (generate or import)
+# The wizard will:
+# ✓ Check Docker is installed and running
+# ✓ Create .env with secure auto-generated passwords
+# ✓ Setup SSL certificates (import or generate)
+# ✓ Authenticate to GHCR (GitHub Container Registry)
 
 # 3. Start services
 ./milou start
 
 # Done! Milou is running.
+```
+
+### Updating Existing Installation
+
+```bash
+# Your .env is automatically preserved!
+cd /opt/milou
+
+# Run setup again (it detects existing .env and skips regeneration)
+./milou setup
+
+# Or just edit .env directly
+nano .env
+
+# Then restart services
+./milou restart
 ```
 
 ### Existing Installation Upgrade

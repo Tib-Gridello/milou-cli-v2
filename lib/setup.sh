@@ -62,15 +62,17 @@ setup_env() {
 
     # Check if .env already exists
     if [[ -f "$env_file" ]]; then
-        if prompt_yn "Environment file already exists. Overwrite?" "n"; then
-            log_info "Backing up existing .env..."
-            cp -p "$env_file" "${env_file}.backup.$(date +%Y%m%d_%H%M%S)" || \
-                die "Failed to backup .env"
-        else
-            log_info "Using existing .env file"
-            env_migrate "$env_file"
-            return 0
-        fi
+        log_warn "Configuration file already exists: $env_file"
+        echo ""
+        log_info "Your existing credentials and settings are preserved"
+        log_info "To reconfigure: delete .env and run setup again, or edit .env directly"
+        echo ""
+
+        # Migrate in case new variables are needed
+        env_migrate "$env_file"
+
+        log_success "Using existing configuration"
+        return 0
     fi
 
     # Get environment type
@@ -222,6 +224,11 @@ DB_NAME=${db_name}
 DB_USER=${db_user}
 DB_PASSWORD=${db_pass}
 
+# PostgreSQL Container Configuration
+POSTGRES_USER=${db_user}
+POSTGRES_PASSWORD=${db_pass}
+POSTGRES_DB=${db_name}
+
 # Redis Configuration
 REDIS_HOST=${redis_host}
 REDIS_PORT=${redis_port}
@@ -364,36 +371,116 @@ setup_docker() {
     return 0
 }
 
-# Main setup - interactive, prompts user for inputs
-setup() {
-    log_info "Welcome to Milou Setup"
-    echo ""
+# Check prerequisites before setup
+check_prerequisites() {
+    log_info "Checking prerequisites..."
 
-    # Check if already initialized
-    if [[ -f "${SCRIPT_DIR}/.env" ]] && [[ -f "${SSL_DIR}/cert.pem" ]]; then
-        log_warn "Milou appears to be already configured"
-        if ! prompt_yn "Run setup again?" "n"; then
-            log_info "Setup cancelled"
-            return 0
+    local missing=()
+    local issues=()
+
+    # Check: Docker installed
+    if ! command -v docker &>/dev/null; then
+        missing+=("docker")
+    else
+        # Check: Docker daemon running
+        if ! docker info &>/dev/null 2>&1; then
+            issues+=("docker_not_running")
+        fi
+
+        # Check: Current user can access Docker
+        if ! docker ps &>/dev/null 2>&1; then
+            issues+=("docker_permission")
         fi
     fi
 
-    # Run interactive setup steps
-    setup_env
-    echo ""
-    setup_ssl
+    # Check: docker-compose or docker compose
+    if ! command -v docker-compose &>/dev/null 2>&1; then
+        if ! docker compose version &>/dev/null 2>&1; then
+            missing+=("docker-compose")
+        fi
+    fi
+
+    # Report missing prerequisites
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing required software:"
+        echo ""
+
+        for tool in "${missing[@]}"; do
+            case "$tool" in
+                docker)
+                    log_color "$RED" "  ✗ Docker Engine"
+                    log_info "    Install: https://docs.docker.com/get-docker/"
+                    log_info "    Ubuntu/Debian: curl -fsSL https://get.docker.com | sh"
+                    ;;
+                docker-compose)
+                    log_color "$RED" "  ✗ Docker Compose"
+                    log_info "    Install: apt install docker-compose-plugin"
+                    log_info "    Or: https://docs.docker.com/compose/install/"
+                    ;;
+            esac
+            echo ""
+        done
+
+        die "Please install missing software and try again"
+    fi
+
+    # Report issues
+    if [[ ${#issues[@]} -gt 0 ]]; then
+        log_error "Configuration issues detected:"
+        echo ""
+
+        for issue in "${issues[@]}"; do
+            case "$issue" in
+                docker_not_running)
+                    log_color "$RED" "  ✗ Docker daemon is not running"
+                    log_info "    Start: sudo systemctl start docker"
+                    log_info "    Enable at boot: sudo systemctl enable docker"
+                    ;;
+                docker_permission)
+                    log_color "$RED" "  ✗ Current user cannot access Docker"
+                    log_info "    Add user to docker group: sudo usermod -aG docker \$USER"
+                    log_info "    Then logout and login again"
+                    log_info "    Or run as root: sudo ./milou setup"
+                    ;;
+            esac
+            echo ""
+        done
+
+        die "Please fix issues above and try again"
+    fi
+
+    log_success "All prerequisites are available"
+    return 0
+}
+
+# Main setup - interactive, prompts user for inputs
+setup() {
+    local total_steps=4
+
+    log_info "Welcome to Milou Setup"
     echo ""
 
-    # Check Docker
+    log_step 1 $total_steps "Prerequisites Check"
+    check_prerequisites
+
+    log_step 2 $total_steps "Environment Configuration"
+    setup_env
+
+    log_step 3 $total_steps "SSL Certificate Setup"
+    setup_ssl
+
+    log_step 4 $total_steps "Final Checks"
     docker_check || log_warn "Docker not available - install it before starting services"
 
     echo ""
-    log_success "Setup completed successfully!"
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}${GREEN}✓ Setup Completed Successfully!${NC}"
+    echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     log_info "Next steps:"
-    log_info "  1. Start Milou services: milou start"
-    log_info "  2. Check status: milou status"
-    log_info "  3. Access frontend: https://localhost"
+    log_info "  1. Start Milou:  ${CYAN}milou start${NC}"
+    log_info "  2. Check status: ${CYAN}milou status${NC}"
+    log_info "  3. View logs:    ${CYAN}milou logs${NC}"
     echo ""
 
     return 0

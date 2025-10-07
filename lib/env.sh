@@ -162,7 +162,7 @@ env_validate() {
     return 0
 }
 
-# Migrate old .env to new format (adds ENGINE_URL if missing)
+# Migrate old .env to new format (adds missing variables)
 env_migrate() {
     local env_file="${1:-${SCRIPT_DIR}/.env}"
 
@@ -170,9 +170,11 @@ env_migrate() {
 
     log_info "Migrating environment file..."
 
+    local content=$(cat "$env_file")
+    local updated=false
+
     # Check if ENGINE_URL exists
     local engine_url=$(env_get "ENGINE_URL" "$env_file")
-
     if [[ -z "$engine_url" ]]; then
         log_info "Adding ENGINE_URL to environment file..."
 
@@ -185,9 +187,6 @@ env_migrate() {
         fi
 
         # Add ENGINE_URL after RABBITMQ section
-        local content=$(cat "$env_file")
-
-        # Find line with RABBITMQ_PORT and add ENGINE_URL after it
         if grep -q "^RABBITMQ_PORT=" "$env_file"; then
             content=$(echo "$content" | sed "/^RABBITMQ_PORT=/a\\
 \\
@@ -202,13 +201,37 @@ ENGINE_URL=${default_engine_url}")
 # ----------------------------------------
 ENGINE_URL=${default_engine_url}"
         fi
-
-        # Write atomically
-        atomic_write "$env_file" "$content" "600"
-
+        updated=true
         log_success "Added ENGINE_URL=${default_engine_url}"
+    fi
+
+    # Check if POSTGRES_ variables exist (needed for postgres container)
+    if ! grep -q "^POSTGRES_USER=" "$env_file"; then
+        log_info "Adding PostgreSQL container variables..."
+
+        # Get existing DB values
+        local db_user=$(env_get "DB_USER" "$env_file")
+        local db_pass=$(env_get "DB_PASSWORD" "$env_file")
+        local db_name=$(env_get "DB_NAME" "$env_file")
+
+        if [[ -n "$db_user" && -n "$db_pass" && -n "$db_name" ]]; then
+            # Add after DB_PASSWORD line
+            content=$(echo "$content" | sed "/^DB_PASSWORD=/a\\
+\\
+# PostgreSQL Container Configuration\\
+POSTGRES_USER=${db_user}\\
+POSTGRES_PASSWORD=${db_pass}\\
+POSTGRES_DB=${db_name}")
+            updated=true
+            log_success "Added POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB"
+        fi
+    fi
+
+    # Write atomically if any changes were made
+    if [[ "$updated" == "true" ]]; then
+        atomic_write "$env_file" "$content" "600"
     else
-        log_info "ENGINE_URL already exists: $engine_url"
+        log_info "No migration needed - all required variables present"
     fi
 
     # Verify permissions

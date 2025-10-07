@@ -272,10 +272,5 @@ ghcr_manage() {
 }
 
 #=============================================================================
-# Exports
+# Module loaded successfully
 #=============================================================================
-
-# export -f ghcr_validate_token ghcr_login ghcr_is_authenticated ghcr_ensure_auth
-# export -f ghcr_setup ghcr_get_versions ghcr_get_latest_version ghcr_manage
-
-# log_debug "GHCR module loaded"
