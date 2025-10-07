@@ -214,10 +214,10 @@ docker_pull() {
             log_info "Updating MILOU_VERSION: $current_version → $target_version"
             env_set "MILOU_VERSION" "$target_version"
         fi
-        log_info "Pulling Docker images for version: $target_version..."
+        log_info "Pulling Docker images for version: $target_version"
     else
         local current_version=$(env_get "MILOU_VERSION" 2>/dev/null || echo "latest")
-        log_info "Pulling Docker images for version: $current_version..."
+        log_info "Pulling Docker images for version: $current_version"
     fi
 
     cd "$SCRIPT_DIR" || die "Failed to change directory"

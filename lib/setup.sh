@@ -251,6 +251,33 @@ LOG_LEVEL=info
         echo ""
         if ghcr_login "$ghcr_token" "false"; then
             log_success "GHCR authentication successful"
+
+            # Query available versions and let user choose
+            log_info "Checking available versions..."
+            local latest_version=$(ghcr_get_latest_version "backend" "$ghcr_token" 2>/dev/null || echo "")
+            local selected_version="latest"
+
+            if [[ -n "$latest_version" && "$latest_version" != "latest" ]]; then
+                echo ""
+                log_info "Latest stable version available: $latest_version"
+
+                if prompt_yn "Use latest stable version ($latest_version)?" "y"; then
+                    selected_version="$latest_version"
+                    log_success "Selected version: $selected_version"
+                else
+                    selected_version="latest"
+                    log_info "Using development version: latest"
+                fi
+            else
+                log_info "Using default version: latest"
+            fi
+
+            # Add MILOU_VERSION to .env file if selected
+            if [[ -n "$selected_version" ]]; then
+                if env_set "MILOU_VERSION" "$selected_version" "$env_file"; then
+                    log_success "Set MILOU_VERSION=$selected_version in .env"
+                fi
+            fi
         else
             log_warn "GHCR authentication failed - you can retry with 'milou ghcr login'"
         fi
@@ -489,12 +516,15 @@ setup() {
 
     log_step 4 $total_steps "Pulling Docker Images"
     if docker_check 2>/dev/null; then
-        log_info "Pulling latest Docker images..."
+        log_info "Pulling Docker images..."
+        echo ""
         # Source docker module if needed
         source "$(dirname "${BASH_SOURCE[0]}")/docker.sh" 2>/dev/null || true
-        if docker_pull 2>/dev/null; then
+        if docker_pull; then
+            echo ""
             log_success "Docker images pulled successfully"
         else
+            echo ""
             log_warn "Could not pull images - will pull on first start"
         fi
     else
@@ -524,10 +554,39 @@ setup() {
         echo ""
     fi
 
-    log_info "Next steps:"
-    log_info "  1. Start Milou:  ${CYAN}milou start${NC}"
-    log_info "  2. Check status: ${CYAN}milou status${NC}"
-    log_info "  3. View logs:    ${CYAN}milou logs${NC}"
+    # Prompt to start services
+    echo ""
+    if prompt_yn "Would you like to start Milou services now?" "y"; then
+        echo ""
+        log_info "Starting Milou services..."
+
+        # Get domain from env for display
+        local domain=$(env_get "DOMAIN" "$env_file" 2>/dev/null || echo "localhost")
+
+        # Source docker module and start services
+        source "$(dirname "${BASH_SOURCE[0]}")/docker.sh" 2>/dev/null || true
+        if docker_start; then
+            echo ""
+            log_success "Milou services started successfully!"
+            echo ""
+            log_info "Access your instance at:"
+            log_info "  ${CYAN}https://${domain}${NC}"
+            echo ""
+            log_info "Monitor services:"
+            log_info "  Status: ${CYAN}milou status${NC}"
+            log_info "  Logs:   ${CYAN}milou logs${NC}"
+        else
+            echo ""
+            log_warn "Failed to start services. Try manually:"
+            log_info "  ${CYAN}milou start${NC}"
+        fi
+    else
+        echo ""
+        log_info "Start Milou when ready:"
+        log_info "  1. Start services: ${CYAN}milou start${NC}"
+        log_info "  2. Check status:   ${CYAN}milou status${NC}"
+        log_info "  3. View logs:      ${CYAN}milou logs${NC}"
+    fi
     echo ""
 
     return 0
