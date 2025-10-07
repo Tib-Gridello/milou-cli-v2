@@ -12,17 +12,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/ghcr.sh"
 # Setup Wizard
 #=============================================================================
 
-# Interactive prompt with default value
+# Interactive prompt with default value (with tab completion for paths)
 prompt() {
     local question="$1"
     local default="${2:-}"  # Fix: Handle unbound variable
     local response
 
     if [[ -n "$default" ]]; then
-        read -p "$(log_color "$BLUE" "?") $question [$default]: " response
+        read -e -p "$(log_color "$BLUE" "?") $question [$default]: " response
         echo "${response:-$default}"
     else
-        read -p "$(log_color "$BLUE" "?") $question: " response
+        read -e -p "$(log_color "$BLUE" "?") $question: " response
         echo "$response"
     fi
 }
