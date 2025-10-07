@@ -574,7 +574,7 @@ setup() {
         log_info "Starting Milou services..."
 
         # Get domain from env for display
-        local domain=$(env_get "DOMAIN" "$env_file" 2>/dev/null || echo "localhost")
+        local domain=$(env_get "DOMAIN" "${SCRIPT_DIR}/.env" 2>/dev/null || echo "localhost")
 
         if docker_start; then
             echo ""

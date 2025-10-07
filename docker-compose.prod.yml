@@ -196,6 +196,8 @@ services:
       - "443:443"
     env_file:
       - ./.env
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
     volumes:
       - ./ssl/cert.pem:/etc/ssl/milou.crt:ro
       - ./ssl/key.pem:/etc/ssl/milou.key:ro
