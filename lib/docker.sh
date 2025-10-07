@@ -99,6 +99,13 @@ docker_check() {
 # Start Milou services
 docker_start() {
     local compose_file=$(docker_get_compose_file)
+    local compose_args="-f $compose_file"
+
+    # Check for override file and include it if it exists
+    if [[ -f "${SCRIPT_DIR}/docker-compose.override.yml" ]]; then
+        compose_args="$compose_args -f ${SCRIPT_DIR}/docker-compose.override.yml"
+        log_debug "Using override file: docker-compose.override.yml"
+    fi
 
     log_info "Starting Milou services..."
     log_debug "Using compose file: $compose_file"
@@ -123,14 +130,14 @@ docker_start() {
     cd "$SCRIPT_DIR" || die "Failed to change directory"
 
     # Start database first
-    docker_compose -f "$compose_file" up -d database || die "Failed to start database"
+    docker_compose $compose_args up -d database || die "Failed to start database"
 
     # Wait for database to be healthy before running migrations
     log_info "Waiting for database..."
     local max_attempts=30
     local attempt=0
     while [ $attempt -lt $max_attempts ]; do
-        if docker_compose -f "$compose_file" ps database 2>/dev/null | grep -q "healthy"; then
+        if docker_compose $compose_args ps database 2>/dev/null | grep -q "healthy"; then
             break
         fi
         sleep 1
@@ -142,7 +149,7 @@ docker_start() {
     db_migrate >/dev/null 2>&1 || log_debug "Migrations check completed"
 
     # Start remaining services (explicitly include nginx to ensure it starts)
-    docker_compose -f "$compose_file" up -d redis rabbitmq backend frontend engine nginx pgadmin || die "Failed to start services"
+    docker_compose $compose_args up -d redis rabbitmq backend frontend engine nginx pgadmin || die "Failed to start services"
 
     log_success "Milou services started successfully"
     docker_status
@@ -153,6 +160,12 @@ docker_start() {
 # Stop Milou services
 docker_stop() {
     local compose_file=$(docker_get_compose_file)
+    local compose_args="-f $compose_file"
+
+    # Check for override file and include it if it exists
+    if [[ -f "${SCRIPT_DIR}/docker-compose.override.yml" ]]; then
+        compose_args="$compose_args -f ${SCRIPT_DIR}/docker-compose.override.yml"
+    fi
 
     log_info "Stopping Milou services..."
 
@@ -161,7 +174,7 @@ docker_stop() {
 
     cd "$SCRIPT_DIR" || die "Failed to change directory"
 
-    docker_compose -f "$compose_file" down || die "Failed to stop services"
+    docker_compose $compose_args down || die "Failed to stop services"
 
     log_success "Milou services stopped successfully"
     return 0
@@ -181,12 +194,18 @@ docker_restart() {
 # Show service status
 docker_status() {
     local compose_file=$(docker_get_compose_file)
+    local compose_args="-f $compose_file"
+
+    # Check for override file and include it if it exists
+    if [[ -f "${SCRIPT_DIR}/docker-compose.override.yml" ]]; then
+        compose_args="$compose_args -f ${SCRIPT_DIR}/docker-compose.override.yml"
+    fi
 
     docker_check
     [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
 
     cd "$SCRIPT_DIR" || die "Failed to change directory"
-    docker_compose -f "$compose_file" ps || true
+    docker_compose $compose_args ps || true
 
     return 0
 }
@@ -195,6 +214,12 @@ docker_status() {
 docker_logs() {
     local service="${1:-}"
     local compose_file=$(docker_get_compose_file)
+    local compose_args="-f $compose_file"
+
+    # Check for override file and include it if it exists
+    if [[ -f "${SCRIPT_DIR}/docker-compose.override.yml" ]]; then
+        compose_args="$compose_args -f ${SCRIPT_DIR}/docker-compose.override.yml"
+    fi
 
     docker_check
     [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
@@ -202,9 +227,9 @@ docker_logs() {
     cd "$SCRIPT_DIR" || die "Failed to change directory"
 
     if [[ -z "$service" ]]; then
-        docker_compose -f "$compose_file" logs --tail=100 -f
+        docker_compose $compose_args logs --tail=100 -f
     else
-        docker_compose -f "$compose_file" logs --tail=100 -f "$service"
+        docker_compose $compose_args logs --tail=100 -f "$service"
     fi
 
     return 0
@@ -214,6 +239,12 @@ docker_logs() {
 docker_pull() {
     local target_version="${1:-}"
     local compose_file=$(docker_get_compose_file)
+    local compose_args="-f $compose_file"
+
+    # Check for override file and include it if it exists
+    if [[ -f "${SCRIPT_DIR}/docker-compose.override.yml" ]]; then
+        compose_args="$compose_args -f ${SCRIPT_DIR}/docker-compose.override.yml"
+    fi
 
     docker_check
     [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
@@ -241,7 +272,7 @@ docker_pull() {
     fi
 
     cd "$SCRIPT_DIR" || die "Failed to change directory"
-    docker_compose -f "$compose_file" pull || die "Failed to pull images"
+    docker_compose $compose_args pull || die "Failed to pull images"
 
     log_success "Docker images updated successfully"
     return 0
@@ -250,6 +281,12 @@ docker_pull() {
 # Rebuild services
 docker_build() {
     local compose_file=$(docker_get_compose_file)
+    local compose_args="-f $compose_file"
+
+    # Check for override file and include it if it exists
+    if [[ -f "${SCRIPT_DIR}/docker-compose.override.yml" ]]; then
+        compose_args="$compose_args -f ${SCRIPT_DIR}/docker-compose.override.yml"
+    fi
 
     log_info "Building Docker images..."
 
@@ -257,7 +294,7 @@ docker_build() {
     [[ -f "$compose_file" ]] || die "docker-compose.yml not found: $compose_file"
 
     cd "$SCRIPT_DIR" || die "Failed to change directory"
-    docker_compose -f "$compose_file" build || die "Failed to build images"
+    docker_compose $compose_args build || die "Failed to build images"
 
     log_success "Docker images built successfully"
     return 0
@@ -349,6 +386,12 @@ docker_update() {
 # Run database migrations
 db_migrate() {
     local compose_file=$(docker_get_compose_file)
+    local compose_args="-f $compose_file"
+
+    # Check for override file and include it if it exists
+    if [[ -f "${SCRIPT_DIR}/docker-compose.override.yml" ]]; then
+        compose_args="$compose_args -f ${SCRIPT_DIR}/docker-compose.override.yml"
+    fi
 
     log_info "Running database migrations..."
 
@@ -359,15 +402,15 @@ db_migrate() {
     cd "$SCRIPT_DIR" || die "Failed to change directory"
 
     # Run the database-migrations service with the profile
-    if docker_compose -f "$compose_file" --profile database-migrations up database-migrations --remove-orphans --abort-on-container-exit --exit-code-from database-migrations; then
+    if docker_compose $compose_args --profile database-migrations up database-migrations --remove-orphans --abort-on-container-exit --exit-code-from database-migrations; then
         log_success "Database migrations completed successfully"
         # Bring down the migration service
-        docker_compose -f "$compose_file" --profile database-migrations down database-migrations 2>/dev/null || true
+        docker_compose $compose_args --profile database-migrations down database-migrations 2>/dev/null || true
         return 0
     else
         log_error "Database migrations failed"
         # Bring down the migration service even on failure
-        docker_compose -f "$compose_file" --profile database-migrations down database-migrations 2>/dev/null || true
+        docker_compose $compose_args --profile database-migrations down database-migrations 2>/dev/null || true
         return 1
     fi
 }
