@@ -11,7 +11,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 GITHUB_ORG="${GITHUB_ORG:-milou-sh}"
 GITHUB_REPO="${GITHUB_REPO:-milou}"
-MANIFEST_URL="https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/latest"
+# Use all releases endpoint since /latest might not work for all repos
+MANIFEST_URL="https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases"
 
 #=============================================================================
 # Version Check Functions
@@ -21,11 +22,20 @@ MANIFEST_URL="https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases/lat
 version_get_current() {
     local version=$(env_get "MILOU_VERSION" 2>/dev/null || echo "")
 
-    # Default to a safe version if not set or if set to "latest"
+    # If version is not set or is "latest", try to resolve it
     if [[ -z "$version" || "$version" == "latest" ]]; then
-        version="1.0.0"
-        log_warn "MILOU_VERSION not set or set to 'latest'. Defaulting to $version"
-        log_info "Run 'milou config set MILOU_VERSION $version' to set explicitly"
+        # Try to get the actual latest version
+        local latest=$(version_get_latest)
+        if [[ -n "$latest" ]]; then
+            version="$latest"
+            # Update the .env file with the resolved version
+            env_set "MILOU_VERSION" "$version" 2>/dev/null || true
+            log_info "Resolved MILOU_VERSION to $version"
+        else
+            # If we still can't determine version, use the template default
+            version="1.0.14"  # Current latest as of now
+            log_info "Using default version: $version"
+        fi
     fi
 
     echo "$version"
@@ -33,21 +43,55 @@ version_get_current() {
 
 # Get latest version from GitHub releases manifest
 version_get_latest() {
-    local response=$(curl -s "$MANIFEST_URL" 2>/dev/null || echo "")
+    # Try to get GitHub token from .env if available
+    local github_token=$(env_get "GITHUB_TOKEN" 2>/dev/null || echo "")
 
-    if [[ -z "$response" ]] || echo "$response" | grep -q '"message"'; then
-        log_debug "Could not fetch version manifest from GitHub"
+    local response=""
+    if [[ -n "$github_token" ]]; then
+        # Use authenticated request for private repos
+        response=$(curl -s -H "Authorization: Bearer $github_token" "$MANIFEST_URL" 2>/dev/null || echo "")
+    else
+        # Try without auth (only works for public repos)
+        response=$(curl -s "$MANIFEST_URL" 2>/dev/null || echo "")
+    fi
+
+    # Check for valid response
+    if [[ -z "$response" ]]; then
+        log_debug "No response from GitHub API"
         echo ""
         return 1
     fi
 
-    # Extract tag_name which contains the version
-    local latest=$(echo "$response" | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
+    # Check for error messages
+    if echo "$response" | grep -q '"message".*"Not Found"'; then
+        log_debug "GitHub releases not accessible (private repo needs token)"
+        echo ""
+        return 1
+    fi
+
+    if echo "$response" | grep -q '"message".*"rate limit"'; then
+        log_debug "GitHub API rate limit exceeded"
+        echo ""
+        return 1
+    fi
+
+    # Extract tag_name from first release (latest) - use jq if available for reliability
+    local latest=""
+    if command -v jq >/dev/null 2>&1; then
+        # Get first non-draft, non-prerelease version
+        latest=$(echo "$response" | jq -r '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name' 2>/dev/null | sed 's/^v//')
+        # If that fails, just get the first release
+        if [[ -z "$latest" ]]; then
+            latest=$(echo "$response" | jq -r '.[0].tag_name' 2>/dev/null | sed 's/^v//')
+        fi
+    else
+        latest=$(echo "$response" | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
+    fi
 
     if [[ -z "$latest" ]]; then
-        # Fallback: try to get from release body if it contains manifest
-        local body=$(echo "$response" | grep -A50 '"body"' | head -51)
-        latest=$(echo "$body" | grep '"latest"' | head -1 | cut -d'"' -f4)
+        log_debug "Could not extract version from GitHub response"
+        echo ""
+        return 1
     fi
 
     echo "$latest"

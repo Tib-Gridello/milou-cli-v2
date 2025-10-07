@@ -249,37 +249,78 @@ LOG_LEVEL=info
     # Login to GHCR if token was provided
     if [[ -n "$ghcr_token" ]]; then
         echo ""
+        # Store the GitHub token in .env for future use
+        if env_set "GITHUB_TOKEN" "$ghcr_token" "$env_file"; then
+            log_success "Stored GitHub token for future version checks"
+        fi
+
         if ghcr_login "$ghcr_token" "false"; then
             log_success "GHCR authentication successful"
 
-            # Query available versions and let user choose
-            log_info "Checking available versions..."
-            local latest_version=$(ghcr_get_latest_version "backend" "$ghcr_token" 2>/dev/null || echo "")
-            local selected_version="latest"
+            # Query available versions from multiple sources
+            log_info "Determining latest version..."
 
-            if [[ -n "$latest_version" && "$latest_version" != "latest" ]]; then
-                echo ""
-                log_info "Latest stable version available: $latest_version"
+            # Try GitHub releases first (most authoritative)
+            local selected_version=""
 
-                if prompt_yn "Use latest stable version ($latest_version)?" "y"; then
-                    selected_version="$latest_version"
-                    log_success "Selected version: $selected_version"
-                else
-                    selected_version="latest"
-                    log_info "Using development version: latest"
-                fi
-            else
-                log_info "Using default version: latest"
+            # First try GitHub releases API (works for system version)
+            source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
+            selected_version=$(version_get_latest)
+
+            # If that fails, try GHCR API (package versions)
+            if [[ -z "$selected_version" ]]; then
+                selected_version=$(ghcr_get_latest_version "backend" "$ghcr_token" 2>/dev/null || echo "")
             fi
 
-            # Add MILOU_VERSION to .env file if selected
-            if [[ -n "$selected_version" ]]; then
+            # If we got a version, use it
+            if [[ -n "$selected_version" && "$selected_version" != "latest" ]]; then
+                echo ""
+                log_info "Latest stable version available: $selected_version"
+
+                if prompt_yn "Use latest stable version ($selected_version)?" "y"; then
+                    log_success "Selected version: $selected_version"
+                else
+                    # User declined, but still try to get a specific version
+                    log_info "Checking for other available versions..."
+                    local alt_version=$(ghcr_get_versions "backend" "$ghcr_token" 2>/dev/null | head -1)
+                    if [[ -n "$alt_version" && "$alt_version" != "latest" ]]; then
+                        selected_version="$alt_version"
+                        log_info "Using alternative version: $selected_version"
+                    else
+                        # As absolute last resort, use the known latest
+                        selected_version="1.0.14"
+                        log_info "Using known stable version: $selected_version"
+                    fi
+                fi
+            else
+                # Could not determine version automatically, use known latest
+                selected_version="1.0.14"
+                log_info "Using known stable version: $selected_version"
+            fi
+
+            # Always set a specific version, never "latest"
+            if [[ -n "$selected_version" && "$selected_version" != "latest" ]]; then
                 if env_set "MILOU_VERSION" "$selected_version" "$env_file"; then
                     log_success "Set MILOU_VERSION=$selected_version in .env"
+                fi
+            else
+                # This should never happen with our logic above, but just in case
+                if env_set "MILOU_VERSION" "1.0.14" "$env_file"; then
+                    log_success "Set MILOU_VERSION=1.0.14 in .env"
                 fi
             fi
         else
             log_warn "GHCR authentication failed - you can retry with 'milou ghcr login'"
+            # Even if GHCR login fails, set a proper version
+            if env_set "MILOU_VERSION" "1.0.14" "$env_file"; then
+                log_success "Set MILOU_VERSION=1.0.14 in .env"
+            fi
+        fi
+    else
+        # No token provided, still set a proper version
+        log_info "No GitHub token provided, using default version"
+        if env_set "MILOU_VERSION" "1.0.14" "$env_file"; then
+            log_success "Set MILOU_VERSION=1.0.14 in .env"
         fi
     fi
 
