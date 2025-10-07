@@ -10,8 +10,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Configuration
-REPO="https://github.com/milou-sh/milou-cli-v2"
-BRANCH="${MILOU_BRANCH:-main}"
+REPO="${MILOU_REPO:-https://github.com/Tib-Gridello/milou-cli-v2}"
+BRANCH="${MILOU_BRANCH:-master}"
 INSTALL_DIR="${MILOU_INSTALL_DIR:-$HOME/milou-cli}"
 
 # Simple logging
