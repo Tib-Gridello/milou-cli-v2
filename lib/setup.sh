@@ -92,53 +92,29 @@ setup_env() {
         fi
     done
 
-    # Get database info
-    log_info "Database configuration..."
-    local db_host=$(prompt "Database host" "postgres")
-    local db_port
-    while true; do
-        db_port=$(prompt "Database port" "5432")
-        if validate_port "$db_port"; then
-            break
-        else
-            log_warn "Invalid port number. Must be between 1 and 65535."
-        fi
-    done
-    local db_name=$(prompt "Database name" "milou")
-    local db_user=$(prompt "Database user" "milou")
+    # Generate all secure credentials automatically
+    log_info "Generating secure credentials for all services..."
+
+    # Database configuration (uses Docker service name)
+    local db_host="database"
+    local db_port="5432"
+    local db_name="milou"
+    local db_user="milou"
     local db_pass=$(random_string 32 alphanumeric)
-    log_info "Generated secure database password"
+    log_success "✓ Database password generated"
 
-    # Get Redis info
-    log_info "Redis configuration..."
-    local redis_host=$(prompt "Redis host" "redis")
-    local redis_port
-    while true; do
-        redis_port=$(prompt "Redis port" "6379")
-        if validate_port "$redis_port"; then
-            break
-        else
-            log_warn "Invalid port number. Must be between 1 and 65535."
-        fi
-    done
+    # Redis configuration (uses Docker service name)
+    local redis_host="redis"
+    local redis_port="6379"
     local redis_pass=$(random_string 32 alphanumeric)
-    log_info "Generated secure Redis password"
+    log_success "✓ Redis password generated"
 
-    # Get RabbitMQ info
-    log_info "RabbitMQ configuration..."
-    local rabbitmq_host=$(prompt "RabbitMQ host" "rabbitmq")
-    local rabbitmq_port
-    while true; do
-        rabbitmq_port=$(prompt "RabbitMQ port" "5672")
-        if validate_port "$rabbitmq_port"; then
-            break
-        else
-            log_warn "Invalid port number. Must be between 1 and 65535."
-        fi
-    done
-    local rabbitmq_user=$(prompt "RabbitMQ user" "milou")
+    # RabbitMQ configuration (uses Docker service name)
+    local rabbitmq_host="rabbitmq"
+    local rabbitmq_port="5672"
+    local rabbitmq_user="milou"
     local rabbitmq_pass=$(random_string 32 alphanumeric)
-    log_info "Generated secure RabbitMQ password"
+    log_success "✓ RabbitMQ password generated"
 
     # Get admin user configuration
     echo ""
@@ -269,20 +245,6 @@ LOG_LEVEL=info
     log_success "Environment file created: $env_file"
     log_warn "Credentials have been generated. Keep .env secure (600 permissions)."
 
-    # Display admin credentials prominently
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_color "$YELLOW" "⚠️  IMPORTANT: Admin Credentials"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    log_color "$GREEN" "  Email:    $admin_email"
-    log_color "$GREEN" "  Password: $admin_password"
-    echo ""
-    log_color "$YELLOW" "  ⚠️  SAVE THESE CREDENTIALS NOW - You'll need them to login!"
-    log_color "$YELLOW" "  ⚠️  Change your password after first login for security"
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
 
     # Login to GHCR if token was provided
     if [[ -n "$ghcr_token" ]]; then
@@ -507,7 +469,7 @@ check_prerequisites() {
 
 # Main setup - interactive, prompts user for inputs
 setup() {
-    local total_steps=4
+    local total_steps=5
 
     log_info "Welcome to Milou Setup"
     echo ""
@@ -518,17 +480,50 @@ setup() {
     log_step 2 $total_steps "Environment Configuration"
     setup_env
 
+    # Save admin credentials for later display
+    local admin_email=$(env_get "ADMIN_EMAIL" 2>/dev/null || echo "")
+    local admin_password=$(env_get "ADMIN_PASSWORD" 2>/dev/null || echo "")
+
     log_step 3 $total_steps "SSL Certificate Setup"
     setup_ssl
 
-    log_step 4 $total_steps "Final Checks"
-    docker_check || log_warn "Docker not available - install it before starting services"
+    log_step 4 $total_steps "Pulling Docker Images"
+    if docker_check 2>/dev/null; then
+        log_info "Pulling latest Docker images..."
+        # Source docker module if needed
+        source "$(dirname "${BASH_SOURCE[0]}")/docker.sh" 2>/dev/null || true
+        if docker_pull 2>/dev/null; then
+            log_success "Docker images pulled successfully"
+        else
+            log_warn "Could not pull images - will pull on first start"
+        fi
+    else
+        log_warn "Docker not available - images will be pulled on first start"
+    fi
+
+    log_step 5 $total_steps "Final Setup"
+    log_success "All services configured"
 
     echo ""
     echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BOLD}${GREEN}✓ Setup Completed Successfully!${NC}"
     echo -e "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+
+    # Show admin credentials if available
+    if [[ -n "$admin_email" && -n "$admin_password" ]]; then
+        echo -e "${BOLD}${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BOLD}${YELLOW}⚠️  ADMIN CREDENTIALS - SAVE THESE!${NC}"
+        echo -e "${BOLD}${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo -e "  ${CYAN}Email:${NC}    ${GREEN}$admin_email${NC}"
+        echo -e "  ${CYAN}Password:${NC} ${GREEN}$admin_password${NC}"
+        echo ""
+        echo -e "  ${YELLOW}⚠️  Change your password after first login!${NC}"
+        echo -e "${BOLD}${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+    fi
+
     log_info "Next steps:"
     log_info "  1. Start Milou:  ${CYAN}milou start${NC}"
     log_info "  2. Check status: ${CYAN}milou status${NC}"
