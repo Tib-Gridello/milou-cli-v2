@@ -28,6 +28,7 @@ source "${SCRIPT_DIR}/lib/ssl.sh"
 source "${SCRIPT_DIR}/lib/docker.sh"
 source "${SCRIPT_DIR}/lib/backup.sh"
 source "${SCRIPT_DIR}/lib/setup.sh"
+source "${SCRIPT_DIR}/lib/version.sh"
 
 #=============================================================================
 # Command Handlers
@@ -49,6 +50,7 @@ COMMANDS:
     status                    Show service status
     logs [service]            Show service logs (optional: specific service)
     update                    Update Milou (pull images and restart)
+    check-updates             Check if updates are available
 
     backup [name]             Create backup of configuration and SSL
     restore <name>            Restore from backup
@@ -90,7 +92,11 @@ COMMANDS:
         clean                 Clean up Docker resources
         update                Update and restart
 
-    version                   Show version information
+    version [action]          Version management
+        show                  Show version information
+        check                 Check for updates
+        current               Show current version
+        latest                Show latest available version
     help                      Show this help message
 
 EXAMPLES:
@@ -169,8 +175,11 @@ main() {
         docker)
             docker_manage "$@"
             ;;
+        check-updates)
+            version_check_updates
+            ;;
         version|--version|-v)
-            show_version
+            version_manage "$@"
             ;;
         help|--help|-h|"")
             show_help

@@ -295,8 +295,25 @@ docker_clean() {
 # Update Milou (pull images and restart)
 docker_update() {
     local skip_backup="${1:-false}"
+    local target_version="${2:-}"
 
     log_info "Updating Milou..."
+
+    # Check for updates first
+    if command -v version_check_updates >/dev/null 2>&1; then
+        if [[ -z "$target_version" ]]; then
+            # Check if update is available
+            if version_check_updates "true"; then
+                local latest=$(version_get_latest 2>/dev/null || echo "")
+                if [[ -n "$latest" ]]; then
+                    target_version="$latest"
+                    log_info "Updating to latest version: $target_version"
+                fi
+            else
+                log_info "Already running latest version"
+            fi
+        fi
+    fi
 
     # Ensure ENGINE_URL exists
     local engine_url=$(env_get "ENGINE_URL" 2>/dev/null || echo "")
@@ -315,13 +332,16 @@ docker_update() {
         log_warn "Skipping backup (--no-backup flag used)"
     fi
 
-    # Pull latest images
-    docker_pull
+    # Pull images (with version if specified)
+    docker_pull "$target_version"
 
     # Restart services
     docker_restart
 
     log_success "Milou updated successfully"
+    if [[ -n "$target_version" ]]; then
+        log_info "Now running version: $target_version"
+    fi
     log_info "Backup available in: ${SCRIPT_DIR}/backups/"
     return 0
 }
