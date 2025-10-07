@@ -15,7 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/ghcr.sh"
 # Interactive prompt with default value
 prompt() {
     local question="$1"
-    local default="$2"
+    local default="${2:-}"  # Fix: Handle unbound variable
     local response
 
     if [[ -n "$default" ]]; then
