@@ -558,13 +558,24 @@ setup() {
     echo ""
     if prompt_yn "Would you like to start Milou services now?" "y"; then
         echo ""
+
+        # Source docker module for all operations
+        source "$(dirname "${BASH_SOURCE[0]}")/docker.sh" 2>/dev/null || true
+
+        # Run database migrations first (required for fresh install)
+        log_info "Running database migrations..."
+        if db_migrate; then
+            log_success "Database migrations completed"
+        else
+            log_warn "Database migrations failed - continuing anyway"
+        fi
+
+        echo ""
         log_info "Starting Milou services..."
 
         # Get domain from env for display
         local domain=$(env_get "DOMAIN" "$env_file" 2>/dev/null || echo "localhost")
 
-        # Source docker module and start services
-        source "$(dirname "${BASH_SOURCE[0]}")/docker.sh" 2>/dev/null || true
         if docker_start; then
             echo ""
             log_success "Milou services started successfully!"

@@ -120,9 +120,9 @@ docker_start() {
         ghcr_ensure_auth "" "true"  # Quiet mode, don't fail if no token
     fi
 
-    # Start services
+    # Start services (explicitly include nginx to ensure it starts)
     cd "$SCRIPT_DIR" || die "Failed to change directory"
-    docker_compose -f "$compose_file" up -d || die "Failed to start services"
+    docker_compose -f "$compose_file" up -d database redis rabbitmq backend frontend engine nginx pgadmin || die "Failed to start services"
 
     log_success "Milou services started successfully"
     docker_status
