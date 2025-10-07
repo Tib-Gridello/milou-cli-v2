@@ -371,6 +371,41 @@ setup_docker() {
     return 0
 }
 
+# Minimal Docker installation (no over-engineering)
+install_docker_minimal() {
+    log_info "Installing Docker..."
+
+    # Check if curl is available
+    if ! command -v curl &>/dev/null; then
+        log_error "curl is required for Docker installation"
+        return 1
+    fi
+
+    # Use Docker's official installation script
+    log_info "Running Docker installation script..."
+    if curl -fsSL https://get.docker.com | sh; then
+        log_success "Docker installed successfully"
+
+        # Start Docker
+        log_info "Starting Docker service..."
+        systemctl start docker 2>/dev/null || true
+        systemctl enable docker 2>/dev/null || true
+
+        # Install docker-compose plugin
+        log_info "Installing Docker Compose plugin..."
+        apt-get update -qq 2>/dev/null
+        apt-get install -y docker-compose-plugin 2>/dev/null || {
+            log_warn "Could not install docker-compose-plugin automatically"
+            log_info "Please install it manually: apt install docker-compose-plugin"
+        }
+
+        return 0
+    else
+        log_error "Docker installation failed"
+        return 1
+    fi
+}
+
 # Check prerequisites before setup
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -420,6 +455,23 @@ check_prerequisites() {
             esac
             echo ""
         done
+
+        # Offer to install automatically
+        echo ""
+        if [[ $EUID -eq 0 ]]; then
+            # Running as root, can install directly
+            if prompt_yn "Would you like to install Docker automatically?" "y"; then
+                install_docker_minimal
+                # Re-check after installation
+                check_prerequisites
+                return $?
+            fi
+        else
+            # Not root, provide instructions
+            log_warn "Not running as root - cannot install automatically"
+            log_info "To install automatically, run: sudo ./milou setup"
+            echo ""
+        fi
 
         die "Please install missing software and try again"
     fi

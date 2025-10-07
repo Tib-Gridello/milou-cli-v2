@@ -26,12 +26,31 @@ A **complete rewrite** of the Milou CLI tool, focused on **security**, **simplic
 
 ## 🏁 Quick Start
 
-### Fresh Installation
+### One-Line Installation
+
+```bash
+# Install with curl
+curl -fsSL https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | bash
+
+# Or with wget
+wget -qO- https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | bash
+```
+
+After installation:
+```bash
+# 1. Run setup wizard
+milou setup
+
+# 2. Start services
+milou start
+```
+
+### Manual Installation
 
 ```bash
 # 1. Clone or download
-git clone <repository> milou-cli-v2
-cd milou-cli-v2
+git clone https://github.com/Tib-Gridello/milou-cli-v2.git ~/milou-cli
+cd ~/milou-cli
 
 # 2. Run setup wizard (checks prerequisites, guides you through config)
 ./milou setup
