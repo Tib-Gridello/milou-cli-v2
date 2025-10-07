@@ -8,7 +8,9 @@
 # - Simplicity (96% size reduction from v1)
 # - Explicit error handling (die on error, no || true)
 
-set -euo pipefail
+# Use careful error handling instead of strict mode
+# set -e would cause exits on any non-zero return (breaks prompts)
+set -uo pipefail
 
 #=============================================================================
 # Initialization

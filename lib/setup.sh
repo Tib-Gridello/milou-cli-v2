@@ -151,7 +151,7 @@ setup_env() {
     local ghcr_token=""
     if prompt_yn "Do you have a GHCR token?" "y"; then
         while true; do
-            read -s -p "$(log_color "$BLUE" "Enter GHCR token: ")" ghcr_token
+            read -s -p "$(log_color "$BLUE" "Enter GHCR token: ")" ghcr_token || true
             echo ""
 
             if [[ -n "$ghcr_token" ]]; then
