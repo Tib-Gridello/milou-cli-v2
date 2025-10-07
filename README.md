@@ -26,17 +26,32 @@ A **complete rewrite** of the Milou CLI tool, focused on **security**, **simplic
 
 ## 🏁 Quick Start
 
-### One-Line Installation
+### System Installation (Recommended for Production)
 
 ```bash
-# Install with curl
-curl -fsSL https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | bash
+# Install to /opt/milou with dedicated user (requires root)
+curl -fsSL https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | sudo bash
 
 # Or with wget
-wget -qO- https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | sudo bash
 ```
 
-After installation:
+This will:
+- Install to `/opt/milou`
+- Create a `milou` system user
+- Add `milou` to the `docker` group
+- Create `/usr/local/bin/milou` wrapper
+- Commands run as `milou` user (never as root)
+
+### Custom Installation (Development/Testing)
+
+```bash
+# Install to custom location (no root needed)
+MILOU_INSTALL_DIR=~/milou-dev curl -fsSL https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | bash
+```
+
+### After Installation
+
 ```bash
 # 1. Run setup wizard
 milou setup
@@ -83,25 +98,28 @@ nano .env
 ./milou restart
 ```
 
+### Security Model
+
+Milou v2 runs with a **dedicated user** for enhanced security:
+
+- **Installation**: Requires root once to set up `/opt/milou` and create `milou` user
+- **Runtime**: All commands run as `milou` user (never as root)
+- **Docker Access**: `milou` user is added to `docker` group
+- **File Permissions**: Configuration and SSL keys have restricted permissions (600)
+- **Updates**: Can be performed without root access
+
 ### Existing Installation Upgrade
 
 ```bash
-# 1. Navigate to your Milou directory
-cd /opt/milou
+# For system installation (/opt/milou)
+curl -fsSL https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | sudo bash
 
-# 2. Backup current setup (optional but recommended)
-cp -rp . ../milou.backup
-
-# 3. Copy new CLI files
-cp -r /path/to/milou-cli-v2/* .
-
-# 4. Migrate configuration (adds ENGINE_URL if missing)
-./milou config migrate
-
-# 5. Update to latest version (auto-creates backup)
-./milou update
-
-# Done! Your installation is updated.
+# The installer will:
+# - Detect existing installation
+# - Backup your .env, SSL certificates, and backups
+# - Update the code
+# - Restore your configuration
+# - Preserve the milou user setup
 ```
 
 ## 📖 Complete Command Reference

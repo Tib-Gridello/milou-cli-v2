@@ -146,11 +146,24 @@ ssl_verify() {
         log_success "Certificate is valid: $days_left days remaining"
     fi
 
-    # Verify certificate and key match
-    local cert_modulus=$(openssl x509 -noout -modulus -in "$SSL_CERT_FILE" 2>/dev/null | openssl md5)
-    local key_modulus=$(openssl rsa -noout -modulus -in "$SSL_KEY_FILE" 2>/dev/null | openssl md5)
+    # Verify certificate and key match (supports both RSA and EC keys)
+    local cert_pubkey=$(openssl x509 -noout -pubkey -in "$SSL_CERT_FILE" 2>/dev/null | openssl md5)
+    local key_pubkey=""
 
-    [[ "$cert_modulus" == "$key_modulus" ]] || die "Certificate and private key do not match"
+    # Try RSA first
+    key_pubkey=$(openssl rsa -in "$SSL_KEY_FILE" -pubout 2>/dev/null | openssl md5)
+
+    # If RSA fails, try EC (elliptic curve)
+    if [[ -z "$key_pubkey" ]] || [[ "$key_pubkey" == "MD5(stdin)= d41d8cd98f00b204e9800998ecf8427e" ]]; then
+        key_pubkey=$(openssl ec -in "$SSL_KEY_FILE" -pubout 2>/dev/null | openssl md5)
+    fi
+
+    # If still no match, try generic pkey command (works with any key type)
+    if [[ -z "$key_pubkey" ]] || [[ "$key_pubkey" == "MD5(stdin)= d41d8cd98f00b204e9800998ecf8427e" ]]; then
+        key_pubkey=$(openssl pkey -in "$SSL_KEY_FILE" -pubout 2>/dev/null | openssl md5)
+    fi
+
+    [[ "$cert_pubkey" == "$key_pubkey" ]] || die "Certificate and private key do not match"
 
     log_success "Certificate verification passed"
     return 0

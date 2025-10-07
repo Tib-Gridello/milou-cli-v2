@@ -12,7 +12,7 @@ NC='\033[0m'
 # Configuration
 REPO="${MILOU_REPO:-https://github.com/Tib-Gridello/milou-cli-v2}"
 BRANCH="${MILOU_BRANCH:-master}"
-INSTALL_DIR="${MILOU_INSTALL_DIR:-$HOME/milou-cli}"
+INSTALL_DIR="${MILOU_INSTALL_DIR:-/opt/milou}"
 
 # Simple logging
 log() { echo -e "${BLUE}→${NC} $1"; }
@@ -34,6 +34,38 @@ check_deps() {
     fi
 
     success "Dependencies OK"
+}
+
+# Setup user and permissions
+setup_user() {
+    # Check if we need root for default installation
+    if [[ "$INSTALL_DIR" == "/opt/milou" ]] && [[ $EUID -ne 0 ]]; then
+        error "Default installation to /opt/milou requires root privileges"
+        echo ""
+        echo "Options:"
+        echo "  1. Run with sudo: sudo bash install.sh"
+        echo "  2. Custom location: MILOU_INSTALL_DIR=~/milou ./install.sh"
+        exit 1
+    fi
+
+    # Create milou user if using default location
+    if [[ "$INSTALL_DIR" == "/opt/milou" ]]; then
+        log "Setting up milou user..."
+
+        # Create user if doesn't exist
+        if ! id -u milou &>/dev/null; then
+            useradd -m -s /bin/bash milou
+            success "Created milou user"
+        else
+            success "milou user already exists"
+        fi
+
+        # Add milou to docker group
+        if command -v docker &>/dev/null; then
+            usermod -aG docker milou 2>/dev/null || true
+            success "Added milou to docker group"
+        fi
+    fi
 }
 
 # Backup existing installation if present
@@ -108,36 +140,64 @@ install() {
     chmod +x "$INSTALL_DIR/milou"
     chmod +x "$INSTALL_DIR/lib"/*.sh 2>/dev/null || true
 
+    # Set ownership for default installation
+    if [[ "$INSTALL_DIR" == "/opt/milou" ]]; then
+        chown -R milou:milou "$INSTALL_DIR"
+        success "Set ownership to milou user"
+    fi
+
     # Restore backup if exists
     restore_backup "$backup_dir"
+
+    # Preserve ownership on restored files
+    if [[ "$INSTALL_DIR" == "/opt/milou" ]] && [[ -n "$backup_dir" ]]; then
+        [[ -f "$INSTALL_DIR/.env" ]] && chown milou:milou "$INSTALL_DIR/.env"
+        [[ -d "$INSTALL_DIR/ssl" ]] && chown -R milou:milou "$INSTALL_DIR/ssl"
+        [[ -d "$INSTALL_DIR/backups" ]] && chown -R milou:milou "$INSTALL_DIR/backups"
+    fi
 
     success "Installation complete!"
 }
 
-# Add to PATH
-setup_path() {
-    log "Setting up PATH..."
+# Setup PATH or wrapper
+setup_access() {
+    if [[ "$INSTALL_DIR" == "/opt/milou" ]]; then
+        # Create wrapper for system installation
+        log "Creating system wrapper..."
 
-    local shell_rc=""
-
-    # Detect shell configuration file
-    if [[ -f "$HOME/.bashrc" ]]; then
-        shell_rc="$HOME/.bashrc"
-    elif [[ -f "$HOME/.zshrc" ]]; then
-        shell_rc="$HOME/.zshrc"
+        cat > /usr/local/bin/milou << 'EOF'
+#!/bin/bash
+# Milou CLI wrapper - runs commands as milou user
+exec sudo -u milou /opt/milou/milou "$@"
+EOF
+        chmod 755 /usr/local/bin/milou
+        success "Created wrapper at /usr/local/bin/milou"
+        log "You can now run: milou"
     else
-        shell_rc="$HOME/.profile"
-    fi
+        # Add to PATH for custom installation
+        log "Setting up PATH..."
 
-    # Check if already in PATH
-    if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-        echo "" >> "$shell_rc"
-        echo "# Milou CLI" >> "$shell_rc"
-        echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$shell_rc"
-        success "Added to PATH in $shell_rc"
-        log "Run: source $shell_rc"
-    else
-        success "Already in PATH"
+        local shell_rc=""
+
+        # Detect shell configuration file
+        if [[ -f "$HOME/.bashrc" ]]; then
+            shell_rc="$HOME/.bashrc"
+        elif [[ -f "$HOME/.zshrc" ]]; then
+            shell_rc="$HOME/.zshrc"
+        else
+            shell_rc="$HOME/.profile"
+        fi
+
+        # Check if already in PATH
+        if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
+            echo "" >> "$shell_rc"
+            echo "# Milou CLI" >> "$shell_rc"
+            echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$shell_rc"
+            success "Added to PATH in $shell_rc"
+            log "Run: source $shell_rc"
+        else
+            success "Already in PATH"
+        fi
     fi
 }
 
@@ -149,16 +209,31 @@ main() {
     echo ""
 
     check_deps
+    setup_user
     install
-    setup_path
+    setup_access
 
     echo ""
     success "Installation successful!"
     echo ""
-    echo "Next steps:"
-    echo "  1. source your shell config or restart terminal"
-    echo "  2. Run: milou setup"
-    echo "  3. Run: milou start"
+
+    if [[ "$INSTALL_DIR" == "/opt/milou" ]]; then
+        echo "Installation location: /opt/milou"
+        echo "Running user: milou"
+        echo ""
+        echo "Next steps:"
+        echo "  1. Run: milou setup"
+        echo "  2. Run: milou start"
+        echo ""
+        echo "Note: Commands will run as 'milou' user via sudo"
+    else
+        echo "Installation location: $INSTALL_DIR"
+        echo ""
+        echo "Next steps:"
+        echo "  1. source your shell config or restart terminal"
+        echo "  2. Run: milou setup"
+        echo "  3. Run: milou start"
+    fi
     echo ""
     echo "Documentation: https://milou.sh/docs"
     echo ""
