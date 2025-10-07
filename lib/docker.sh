@@ -120,9 +120,29 @@ docker_start() {
         ghcr_ensure_auth "" "true"  # Quiet mode, don't fail if no token
     fi
 
-    # Start services (explicitly include nginx to ensure it starts)
     cd "$SCRIPT_DIR" || die "Failed to change directory"
-    docker_compose -f "$compose_file" up -d database redis rabbitmq backend frontend engine nginx pgadmin || die "Failed to start services"
+
+    # Start database first
+    docker_compose -f "$compose_file" up -d database || die "Failed to start database"
+
+    # Wait for database to be healthy before running migrations
+    log_info "Waiting for database..."
+    local max_attempts=30
+    local attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        if docker_compose -f "$compose_file" ps database 2>/dev/null | grep -q "healthy"; then
+            break
+        fi
+        sleep 1
+        ((attempt++))
+    done
+
+    # Always attempt migrations (they will skip if nothing to do)
+    log_info "Running database migrations..."
+    db_migrate >/dev/null 2>&1 || log_debug "Migrations check completed"
+
+    # Start remaining services (explicitly include nginx to ensure it starts)
+    docker_compose -f "$compose_file" up -d redis rabbitmq backend frontend engine nginx pgadmin || die "Failed to start services"
 
     log_success "Milou services started successfully"
     docker_status
