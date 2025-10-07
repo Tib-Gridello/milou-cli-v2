@@ -41,55 +41,49 @@ version_get_current() {
     echo "$version"
 }
 
-# Get latest version from GitHub releases manifest
+# Get latest version from GHCR (our source of truth for Docker images)
 version_get_latest() {
     # Try to get GitHub token from .env if available
     local github_token=$(env_get "GITHUB_TOKEN" 2>/dev/null || echo "")
 
-    local response=""
-    if [[ -n "$github_token" ]]; then
-        # Use authenticated request for private repos
-        response=$(curl -s -H "Authorization: Bearer $github_token" "$MANIFEST_URL" 2>/dev/null || echo "")
-    else
-        # Try without auth (only works for public repos)
-        response=$(curl -s "$MANIFEST_URL" 2>/dev/null || echo "")
+    if [[ -z "$github_token" ]]; then
+        log_debug "No GitHub token available for GHCR API"
+        echo ""
+        return 1
     fi
 
-    # Check for valid response
+    # Use GHCR API to get versions for backend (as reference service)
+    local ghcr_url="https://api.github.com/orgs/${GITHUB_ORG}/packages/container/milou%2Fbackend/versions"
+    local response=$(curl -s -H "Authorization: Bearer $github_token" "$ghcr_url" 2>/dev/null || echo "")
+
     if [[ -z "$response" ]]; then
-        log_debug "No response from GitHub API"
+        log_debug "No response from GHCR API"
         echo ""
         return 1
     fi
 
     # Check for error messages
     if echo "$response" | grep -q '"message".*"Not Found"'; then
-        log_debug "GitHub releases not accessible (private repo needs token)"
+        log_debug "GHCR package not accessible"
         echo ""
         return 1
     fi
 
-    if echo "$response" | grep -q '"message".*"rate limit"'; then
-        log_debug "GitHub API rate limit exceeded"
-        echo ""
-        return 1
-    fi
-
-    # Extract tag_name from first release (latest) - use jq if available for reliability
+    # Extract semantic versions from tags, excluding "latest"
     local latest=""
     if command -v jq >/dev/null 2>&1; then
-        # Get first non-draft, non-prerelease version
-        latest=$(echo "$response" | jq -r '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name' 2>/dev/null | sed 's/^v//')
-        # If that fails, just get the first release
-        if [[ -z "$latest" ]]; then
-            latest=$(echo "$response" | jq -r '.[0].tag_name' 2>/dev/null | sed 's/^v//')
-        fi
+        # Get all version tags and sort them
+        latest=$(echo "$response" | jq -r '.[].metadata.container.tags[]' 2>/dev/null | \
+                 grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | \
+                 sort -V | tail -1)
     else
-        latest=$(echo "$response" | grep '"tag_name"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
+        # Fallback without jq
+        latest=$(echo "$response" | grep -o '"[0-9]\+\.[0-9]\+\.[0-9]\+"' | \
+                 tr -d '"' | sort -V | tail -1)
     fi
 
     if [[ -z "$latest" ]]; then
-        log_debug "Could not extract version from GitHub response"
+        log_debug "No semantic version found in GHCR"
         echo ""
         return 1
     fi
