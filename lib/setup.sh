@@ -60,7 +60,7 @@ setup_env() {
 
     local env_file="${SCRIPT_DIR}/.env"
 
-    # Check if .env already exists
+    # Check if .env already exists FIRST before prompting
     if [[ -f "$env_file" ]]; then
         log_warn "Configuration file already exists: $env_file"
         echo ""
