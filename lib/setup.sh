@@ -249,9 +249,9 @@ LOG_LEVEL=info
     # Login to GHCR if token was provided
     if [[ -n "$ghcr_token" ]]; then
         echo ""
-        # Store the GitHub token in .env for future use
-        if env_set "GITHUB_TOKEN" "$ghcr_token" "$env_file"; then
-            log_success "Stored GitHub token for future version checks"
+        # Store the GHCR token in .env for future use
+        if env_set "GHCR_TOKEN" "$ghcr_token" "$env_file"; then
+            log_success "Stored GHCR token for future version checks"
         fi
 
         if ghcr_login "$ghcr_token" "false"; then

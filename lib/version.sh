@@ -43,18 +43,18 @@ version_get_current() {
 
 # Get latest version from GHCR (our source of truth for Docker images)
 version_get_latest() {
-    # Try to get GitHub token from .env if available
-    local github_token=$(env_get "GITHUB_TOKEN" 2>/dev/null || echo "")
+    # Try to get GHCR token from .env if available
+    local ghcr_token=$(env_get "GHCR_TOKEN" 2>/dev/null || echo "")
 
-    if [[ -z "$github_token" ]]; then
-        log_debug "No GitHub token available for GHCR API"
+    if [[ -z "$ghcr_token" ]]; then
+        log_debug "No GHCR token available for GHCR API"
         echo ""
         return 1
     fi
 
     # Use GHCR API to get versions for backend (as reference service)
     local ghcr_url="https://api.github.com/orgs/${GITHUB_ORG}/packages/container/milou%2Fbackend/versions"
-    local response=$(curl -s -H "Authorization: Bearer $github_token" "$ghcr_url" 2>/dev/null || echo "")
+    local response=$(curl -s -H "Authorization: Bearer $ghcr_token" "$ghcr_url" 2>/dev/null || echo "")
 
     if [[ -z "$response" ]]; then
         log_debug "No response from GHCR API"
