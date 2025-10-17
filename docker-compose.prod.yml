@@ -15,7 +15,7 @@ services:
     networks:
       - milou_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U secure -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5

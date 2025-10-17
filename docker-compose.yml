@@ -18,7 +18,7 @@ services:
     networks:
       - milou_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U secure -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -162,7 +162,7 @@ services:
       - ./.env
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
-      - DATABASE_URI=postgresql+psycopg2://secure:secure@database:5432/milou
+      - DATABASE_URI=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@database:5432/${POSTGRES_DB:-milou}
       - PYTHONUNBUFFERED=1
     volumes:
       - engine_logs:/app/src/logger/logs

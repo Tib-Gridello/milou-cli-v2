@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-secure}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure}
-      POSTGRES_database: milou
+      POSTGRES_DB: milou
       DB_NAME: milou
     volumes:
       - pgdata:/var/lib/postgresql/data:rw
@@ -16,7 +16,7 @@ services:
     networks:
       - milou_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-secure} -d milou"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-milou}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -165,7 +165,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - RABBITMQ_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
-      - DATABASE_URI=postgresql+psycopg2://${POSTGRES_USER:-secure}:${POSTGRES_PASSWORD:-secure}@database:5432/milou
+      - DATABASE_URI=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@database:5432/${POSTGRES_DB:-milou}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-your_redis_password}
