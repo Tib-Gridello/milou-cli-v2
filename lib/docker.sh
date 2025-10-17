@@ -376,8 +376,17 @@ docker_update() {
     # Pull images (with version if specified)
     docker_pull "$target_version"
 
-    # Restart services
-    docker_restart
+    # Stop services before running migrations
+    docker_stop
+
+    # Run migrations during update (database is auto-started via depends_on)
+    log_info "Running database migrations as part of update..."
+    if ! db_migrate; then
+        log_warn "Database migrations failed during update. Continuing with restart."
+    fi
+
+    # Start services (no migrations on start by default)
+    docker_start
 
     log_success "Milou updated successfully"
     if [[ -n "$target_version" ]]; then
