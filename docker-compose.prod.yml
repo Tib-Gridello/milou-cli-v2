@@ -165,10 +165,9 @@ services:
     container_name: milou-cli-v2-database-migrations
     profiles:
       - "database-migrations"
-    working_dir: /app/backend
     entrypoint: ""
-    command: >
-      sh -lc "node ../node_modules/typeorm/cli.js -d dist/database/repository.js migration:run"
+    command: |
+      sh -c "npm run migration:run:prod --workspace=backend"
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URI=${DATABASE_URI}

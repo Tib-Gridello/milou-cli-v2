@@ -382,7 +382,7 @@ docker_update() {
     # Run migrations during update (database is auto-started via depends_on)
     log_info "Running database migrations as part of update..."
     if ! db_migrate; then
-        log_warn "Database migrations failed during update. Continuing with restart."
+        die "Database migrations failed during update"
     fi
 
     # Start services (no migrations on start by default)
