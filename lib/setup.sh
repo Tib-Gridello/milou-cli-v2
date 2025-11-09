@@ -234,9 +234,17 @@ setup_env() {
     local db_name=$(env_get_or_default "DB_NAME" "milou" "$env_file")
     local database_uri="postgresql://${db_user}:${db_pass}@${db_host}:${db_port}/${db_name}"
 
+    local server_name="$domain"
+    local scheme="https"
+    [[ "$node_env" == "development" ]] && scheme="http"
+    local domain_url="${scheme}://${domain}"
+
     env_set_many "$env_file" \
         NODE_ENV "$node_env" \
         DOMAIN "$domain" \
+        SERVER_NAME "$server_name" \
+        CORS_ORIGIN "$domain_url" \
+        APP_URL "$domain_url" \
         ENGINE_URL "$engine_url" \
         ADMIN_EMAIL "$admin_email" \
         DATABASE_URI "$database_uri"
