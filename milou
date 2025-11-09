@@ -136,23 +136,9 @@ main() {
         setup)
             setup_manage "$@"
             ;;
-        start)
-            docker_start "$@"
-            ;;
-        stop)
-            docker_stop "$@"
-            ;;
-        restart)
-            docker_restart "$@"
-            ;;
-        status)
-            docker_status "$@"
-            ;;
-        logs)
-            docker_logs "$@"
-            ;;
-        update)
-            docker_update "$@"
+        start|stop|restart|status|logs|update|pull|build|clean)
+            # Docker commands - route through docker_manage
+            docker_manage "$command" "$@"
             ;;
         backup)
             backup_manage "$@"

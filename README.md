@@ -60,6 +60,30 @@ milou setup
 milou start
 ```
 
+### Non-Interactive Setup
+
+Need to run the wizard unattended? Use the new flags and environment overrides:
+
+```bash
+# Accept defaults for every prompt, using env overrides when provided
+MILOU_SETUP_DOMAIN=demo.milou.sh \
+MILOU_SETUP_ADMIN_EMAIL=ops@milou.sh \
+MILOU_SETUP_GHCR_TOKEN=ghp_xxx \
+milou setup --yes
+
+# Skip the optional image pull step (useful on air-gapped hosts)
+milou setup --yes --no-pull
+```
+
+Supported overrides:
+
+- `MILOU_SETUP_NODE_ENV` (`development` or `production`)
+- `MILOU_SETUP_DOMAIN`
+- `MILOU_SETUP_ADMIN_EMAIL`
+- `MILOU_SETUP_GHCR_TOKEN`
+
+When `--yes` (or `MILOU_SETUP_ASSUME_YES=true`) is set, the wizard automatically selects the documented defaults for every prompt, so make sure to export the variables above if you need custom values.
+
 ### Manual Installation
 
 ```bash

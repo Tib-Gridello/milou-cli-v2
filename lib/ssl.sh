@@ -25,6 +25,20 @@ ssl_init() {
     return 0
 }
 
+# Validate that certificate and private key match
+# Uses openssl pkey which handles all key types automatically
+ssl_validate_key_match() {
+    local cert_path="$1"
+    local key_path="$2"
+    
+    local cert_pubkey=$(openssl x509 -noout -pubkey -in "$cert_path" 2>/dev/null | openssl md5)
+    local key_pubkey=$(openssl pkey -in "$key_path" -pubout 2>/dev/null | openssl md5)
+    
+    [[ -n "$cert_pubkey" && -n "$key_pubkey" ]] || die "Failed to extract public keys"
+    [[ "$cert_pubkey" == "$key_pubkey" ]] || die "Certificate and private key do not match"
+    return 0
+}
+
 # Generate self-signed certificate
 ssl_generate_self_signed() {
     local domain="${1:-localhost}"
@@ -45,7 +59,7 @@ ssl_generate_self_signed() {
     chmod 644 "$SSL_CERT_FILE" || die "Failed to set certificate permissions"
     chmod 600 "$SSL_KEY_FILE" || die "Failed to set private key permissions"
 
-    # Verify permissions
+    # Verify permissions (explicit check for generated files)
     verify_perms "$SSL_CERT_FILE" "644"
     verify_perms "$SSL_KEY_FILE" "600"
 
@@ -76,24 +90,8 @@ ssl_import() {
 
     ssl_init
 
-    # Validate certificate and key match (supports both RSA and EC keys)
-    local cert_pubkey=$(openssl x509 -noout -pubkey -in "$cert_path" 2>/dev/null | openssl md5)
-    local key_pubkey=""
-
-    # Try RSA first
-    key_pubkey=$(openssl rsa -in "$key_path" -pubout 2>/dev/null | openssl md5)
-
-    # If RSA fails, try EC (elliptic curve)
-    if [[ -z "$key_pubkey" ]] || [[ "$key_pubkey" == "MD5(stdin)= d41d8cd98f00b204e9800998ecf8427e" ]]; then
-        key_pubkey=$(openssl ec -in "$key_path" -pubout 2>/dev/null | openssl md5)
-    fi
-
-    # If still no match, try generic pkey command (works with any key type)
-    if [[ -z "$key_pubkey" ]] || [[ "$key_pubkey" == "MD5(stdin)= d41d8cd98f00b204e9800998ecf8427e" ]]; then
-        key_pubkey=$(openssl pkey -in "$key_path" -pubout 2>/dev/null | openssl md5)
-    fi
-
-    [[ "$cert_pubkey" == "$key_pubkey" ]] || die "Certificate and private key do not match"
+    # Validate certificate and key match
+    ssl_validate_key_match "$cert_path" "$key_path"
 
     # Copy with install command (atomic + permissions in one operation)
     install -m 644 "$cert_path" "$SSL_CERT_FILE" || die "Failed to install certificate"
@@ -104,7 +102,7 @@ ssl_import() {
         log_info "CA certificate: $SSL_CA_FILE"
     fi
 
-    # Verify permissions
+    # Verify permissions (install command sets them, but verify for safety)
     verify_perms "$SSL_CERT_FILE" "644"
     verify_perms "$SSL_KEY_FILE" "600"
 
@@ -146,24 +144,8 @@ ssl_verify() {
         log_success "Certificate is valid: $days_left days remaining"
     fi
 
-    # Verify certificate and key match (supports both RSA and EC keys)
-    local cert_pubkey=$(openssl x509 -noout -pubkey -in "$SSL_CERT_FILE" 2>/dev/null | openssl md5)
-    local key_pubkey=""
-
-    # Try RSA first
-    key_pubkey=$(openssl rsa -in "$SSL_KEY_FILE" -pubout 2>/dev/null | openssl md5)
-
-    # If RSA fails, try EC (elliptic curve)
-    if [[ -z "$key_pubkey" ]] || [[ "$key_pubkey" == "MD5(stdin)= d41d8cd98f00b204e9800998ecf8427e" ]]; then
-        key_pubkey=$(openssl ec -in "$SSL_KEY_FILE" -pubout 2>/dev/null | openssl md5)
-    fi
-
-    # If still no match, try generic pkey command (works with any key type)
-    if [[ -z "$key_pubkey" ]] || [[ "$key_pubkey" == "MD5(stdin)= d41d8cd98f00b204e9800998ecf8427e" ]]; then
-        key_pubkey=$(openssl pkey -in "$SSL_KEY_FILE" -pubout 2>/dev/null | openssl md5)
-    fi
-
-    [[ "$cert_pubkey" == "$key_pubkey" ]] || die "Certificate and private key do not match"
+    # Verify certificate and key match
+    ssl_validate_key_match "$SSL_CERT_FILE" "$SSL_KEY_FILE"
 
     log_success "Certificate verification passed"
     return 0

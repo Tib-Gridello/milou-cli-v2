@@ -115,9 +115,34 @@ restore_backup() {
     fi
 }
 
+confirm_overwrite() {
+    if [[ "${MILOU_INSTALL_FORCE:-false}" == "true" ]]; then
+        return 0
+    fi
+
+    if [[ -t 0 ]]; then
+        read -r -p "Existing installation found at $INSTALL_DIR. Overwrite it? [y/N] " answer
+        case "${answer,,}" in
+            y|yes)
+                return 0
+                ;;
+            *)
+                success "Installation cancelled by user"
+                exit 0
+                ;;
+        esac
+    else
+        error "Existing installation at $INSTALL_DIR. Re-run with MILOU_INSTALL_FORCE=true to overwrite."
+    fi
+}
+
 # Download and install
 install() {
     log "Installing Milou CLI v2 to $INSTALL_DIR..."
+
+    if [[ -d "$INSTALL_DIR" ]]; then
+        confirm_overwrite
+    fi
 
     # Backup existing installation
     local backup_dir=$(backup_existing)

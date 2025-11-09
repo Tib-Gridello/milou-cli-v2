@@ -16,6 +16,22 @@ GHCR_API_BASE="${GHCR_API_BASE:-https://api.github.com}"
 # GHCR Authentication Functions
 #=============================================================================
 
+# Get GHCR token from environment or .env file
+ghcr_get_token() {
+    local token="${1:-}"
+    
+    # Use provided token if given
+    [[ -n "$token" ]] && echo "$token" && return 0
+    
+    # Try to load from .env file
+    token=$(env_get_or_default "GHCR_TOKEN" "")
+    
+    # Fall back to environment variable
+    [[ -z "$token" ]] && token="${GHCR_TOKEN:-}"
+    
+    echo "$token"
+}
+
 # Validate GHCR token by testing API access
 ghcr_validate_token() {
     local token="${1:-}"
@@ -27,18 +43,20 @@ ghcr_validate_token() {
 
     log_debug "Validating GHCR token..."
 
-    # Test token by querying GitHub API
-    local response=$(curl -s -H "Authorization: token $token" \
-        "${GHCR_API_BASE}/user" 2>/dev/null)
+    # Query packages endpoint which only requires read:packages scope
+    local status
+    status=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: token $token" \
+        -H "Accept: application/vnd.github+json" \
+        "${GHCR_API_BASE}/user/packages?per_page=1" 2>/dev/null || echo "000")
 
-    if echo "$response" | grep -q '"login"'; then
-        local username=$(echo "$response" | grep '"login"' | head -1 | cut -d'"' -f4)
-        log_debug "Token valid for user: $username"
+    if [[ "$status" == "200" ]]; then
+        log_debug "Token accepted by GitHub Packages API"
         return 0
-    else
-        log_error "Invalid GHCR token"
-        return 1
     fi
+
+    log_error "Invalid or unauthorized GHCR token (status: $status)"
+    return 1
 }
 
 # Login to GitHub Container Registry
@@ -46,16 +64,8 @@ ghcr_login() {
     local token="${1:-}"
     local quiet="${2:-false}"
 
-    # Use provided token or get from environment
-    if [[ -z "$token" ]]; then
-        # Try to load from env.sh if available
-        if command -v env_get >/dev/null 2>&1; then
-            token=$(env_get "GHCR_TOKEN" 2>/dev/null || echo "")
-        fi
-
-        # Fall back to environment variable
-        [[ -z "$token" ]] && token="${GHCR_TOKEN:-}"
-    fi
+    # Get token from all sources
+    token=$(ghcr_get_token "$token")
 
     [[ -z "$token" ]] && {
         [[ "$quiet" != "true" ]] && log_error "GHCR token required for authentication"
@@ -165,14 +175,9 @@ ghcr_setup() {
 
     # Test login
     if ghcr_login "$token" "false"; then
-        # Store in environment
-        if command -v env_set >/dev/null 2>&1; then
-            env_set "GHCR_TOKEN" "$token"
-            log_success "GHCR token saved to .env"
-        else
-            export GHCR_TOKEN="$token"
-            log_warn "env module not available, token not persisted"
-        fi
+        # Store in .env
+        env_set "GHCR_TOKEN" "$token"
+        log_success "GHCR token saved to .env"
         return 0
     else
         log_error "Failed to authenticate with GHCR"
@@ -185,13 +190,8 @@ ghcr_get_versions() {
     local package="${1:-backend}"
     local token="${2:-}"
 
-    # Get token from env if not provided
-    if [[ -z "$token" ]]; then
-        if command -v env_get >/dev/null 2>&1; then
-            token=$(env_get "GHCR_TOKEN" 2>/dev/null || echo "")
-        fi
-        [[ -z "$token" ]] && token="${GHCR_TOKEN:-}"
-    fi
+    # Get token from all sources
+    token=$(ghcr_get_token "$token")
 
     [[ -z "$token" ]] && {
         log_error "GHCR token required to query versions"

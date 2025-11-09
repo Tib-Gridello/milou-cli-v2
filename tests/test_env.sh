@@ -218,6 +218,37 @@ test_permissions_preserved() {
     echo ""
 }
 
+# Test 8: env_get handles values containing '='
+test_env_get_handles_equals() {
+    log_info "Test: env_get handles values containing '=' characters"
+
+    local env_file="$TEST_DIR/.env"
+    echo "DATABASE_URI=postgresql://user:pa=ss@localhost:5432/dbname" > "$env_file"
+    chmod 600 "$env_file"
+
+    local uri=$(env_get "DATABASE_URI" "$env_file")
+    assert_eq "$uri" "postgresql://user:pa=ss@localhost:5432/dbname" "DATABASE_URI should be returned exactly"
+
+    echo ""
+}
+
+# Test 9: env_set_many updates multiple keys atomically
+test_env_set_many() {
+    log_info "Test: env_set_many updates multiple keys"
+
+    local env_file="$TEST_DIR/.env"
+    echo "KEY1=value1" > "$env_file"
+    chmod 600 "$env_file"
+
+    env_set_many "$env_file" KEY1 "new_value" KEY2 "value2"
+
+    assert_eq "$(env_get "KEY1" "$env_file")" "new_value" "KEY1 should update"
+    assert_eq "$(env_get "KEY2" "$env_file")" "value2" "KEY2 should be added"
+    assert_perms "$env_file" "600" "Permissions should stay 600"
+
+    echo ""
+}
+
 #=============================================================================
 # Run all tests
 #=============================================================================
@@ -229,6 +260,8 @@ test_env_set_add
 test_env_migrate
 test_env_migrate_skip
 test_permissions_preserved
+test_env_get_handles_equals
+test_env_set_many
 
 #=============================================================================
 # Summary

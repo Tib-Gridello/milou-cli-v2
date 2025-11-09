@@ -36,7 +36,10 @@ log_error() {
 }
 
 log_debug() {
-    [[ "${DEBUG:-}" == "true" ]] && echo -e "${DIM}DEBUG:${NC} $*" >&2
+    if [[ "${DEBUG:-}" == "true" ]]; then
+        echo -e "${DIM}DEBUG:${NC} $*" >&2
+    fi
+    return 0
 }
 
 log_color() {
@@ -211,51 +214,15 @@ validate_file() {
     [[ -f "$file" ]] && [[ -r "$file" ]]
 }
 
-#=============================================================================
-# Version & Help
-#=============================================================================
-
-show_version() {
-    echo "Milou CLI v2.0.0 (clean rewrite)"
-    echo "96% smaller, 100% more secure"
-}
-
-show_help() {
-    cat << 'EOF'
-Milou CLI v2 - Clean & Simple Docker Management
-
-USAGE:
-    milou <command> [options]
-
-COMMANDS:
-    setup               Interactive setup wizard
-    start               Start all services
-    stop                Stop all services
-    restart             Restart all services
-    logs [service]      View logs
-    update              Update services
-    backup              Create backup
-    restore <file>      Restore from backup
-
-    config get <key>    Get config value
-    config set <key> <value>  Set config value
-
-    ssl generate        Generate self-signed certificate
-    ssl import <cert> <key>   Import existing certificate
-    ssl letsencrypt <domain> <email>  Get Let's Encrypt cert
-
-    version             Show version
-    help                Show this help
-
-EXAMPLES:
-    milou setup
-    milou config set ENGINE_URL http://engine:8089
-    milou ssl import /path/to/cert.pem /path/to/key.pem
-    milou backup
-    milou update
-
-For more information: https://github.com/milou-sh/milou
-EOF
+# Validate required argument (helper for consistent validation)
+validate_required() {
+    local var="$1"
+    local name="${2:-argument}"
+    [[ -z "$var" ]] && {
+        log_error "$name is required"
+        return 1
+    }
+    return 0
 }
 
 #=============================================================================

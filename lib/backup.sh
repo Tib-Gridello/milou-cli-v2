@@ -3,13 +3,30 @@
 # Simple, reliable backup/restore for Milou
 
 source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/docker.sh"
+
+# docker.sh is loaded by main script, docker_stop is available
+# This avoids circular dependencies
 
 #=============================================================================
 # Backup Constants
 #=============================================================================
 
 BACKUP_DIR="${SCRIPT_DIR}/backups"
+DEFAULT_BACKUP_KEEP=10
+BACKUP_MANIFEST_VERSION="2"
+
+backup_checksum() {
+    local file="$1"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        log_warn "sha256sum/shasum not available; skipping checksum for $file"
+        echo "unavailable"
+    fi
+}
 
 #=============================================================================
 # Backup Operations
@@ -33,37 +50,37 @@ backup_create() {
         fi
     fi
 
-    # Create staging directory
+    log_info "Backing up configuration files..."
+
+    # Create staging directory for clean backup
     local staging_dir=$(mktemp -d) || die "Failed to create staging directory"
     trap "rm -rf '$staging_dir'" RETURN
 
-    log_info "Backing up configuration files..."
-
     # Backup .env (preserve permissions)
-    if [[ -f "${SCRIPT_DIR}/.env" ]]; then
-        install -m 600 "${SCRIPT_DIR}/.env" "${staging_dir}/.env" || \
-            die "Failed to backup .env"
+    [[ -f "${SCRIPT_DIR}/.env" ]] && install -m 600 "${SCRIPT_DIR}/.env" "${staging_dir}/.env" || \
+        die "Failed to backup .env"
+    local env_checksum="missing"
+    if [[ -f "${staging_dir}/.env" ]]; then
+        env_checksum=$(backup_checksum "${staging_dir}/.env")
     fi
 
     # Backup docker-compose files
     for compose_file in docker-compose*.yml production.yml; do
-        if [[ -f "${SCRIPT_DIR}/$compose_file" ]]; then
-            cp -p "${SCRIPT_DIR}/$compose_file" "${staging_dir}/" || \
-                log_warn "Failed to backup $compose_file"
-        fi
+        [[ -f "${SCRIPT_DIR}/$compose_file" ]] && cp -p "${SCRIPT_DIR}/$compose_file" "${staging_dir}/" || \
+            log_warn "Failed to backup $compose_file"
     done
 
     # Backup SSL certificates if they exist
-    if [[ -d "${SCRIPT_DIR}/ssl" ]]; then
+    [[ -d "${SCRIPT_DIR}/ssl" ]] && {
         log_info "Backing up SSL certificates..."
-        cp -rp "${SCRIPT_DIR}/ssl" "${staging_dir}/" || \
-            log_warn "Failed to backup SSL directory"
-    fi
+        cp -rp "${SCRIPT_DIR}/ssl" "${staging_dir}/" || log_warn "Failed to backup SSL directory"
+    }
 
     # Create backup manifest
     cat > "${staging_dir}/MANIFEST" <<EOF
 Milou Backup Manifest
 =====================
+Backup Manifest Version: $BACKUP_MANIFEST_VERSION
 Backup Name: $backup_name
 Created: $(date)
 Host: $(hostname)
@@ -73,13 +90,14 @@ Contents:
 - Configuration files (.env, docker-compose files)
 - SSL certificates (if present)
 
+ENV_SHA256=${env_checksum}
+
 Restore with: milou restore $backup_name
 EOF
 
     # Create tar.gz archive
     log_info "Creating archive..."
-    tar -czf "$backup_file" -C "$staging_dir" . || \
-        die "Failed to create backup archive"
+    tar -czf "$backup_file" -C "$staging_dir" . || die "Failed to create backup archive"
 
     # Verify backup was created
     if [[ -f "$backup_file" ]]; then
@@ -161,6 +179,25 @@ backup_restore() {
     tar -xzf "$backup_file" -C "$staging_dir" || \
         die "Failed to extract backup"
 
+    local manifest_file="${staging_dir}/MANIFEST"
+    if [[ -f "$manifest_file" ]]; then
+        local recorded_version
+        recorded_version=$(grep -E '^Backup Manifest Version:' "$manifest_file" | awk -F': ' '{print $2}')
+        if [[ -n "$recorded_version" && "$recorded_version" != "$BACKUP_MANIFEST_VERSION" ]]; then
+            log_warn "Backup manifest version $recorded_version differs from expected $BACKUP_MANIFEST_VERSION"
+        fi
+
+        local recorded_checksum
+        recorded_checksum=$(grep -E '^ENV_SHA256=' "$manifest_file" | cut -d= -f2)
+        if [[ -n "$recorded_checksum" && "$recorded_checksum" != "missing" && "$recorded_checksum" != "unavailable" && -f "${staging_dir}/.env" ]]; then
+            local current_checksum
+            current_checksum=$(backup_checksum "${staging_dir}/.env")
+            if [[ -n "$current_checksum" && "$current_checksum" != "$recorded_checksum" ]]; then
+                log_warn ".env checksum mismatch (expected $recorded_checksum, got $current_checksum)"
+            fi
+        fi
+    fi
+
     # Restore .env
     if [[ -f "${staging_dir}/.env" ]]; then
         log_info "Restoring .env..."
@@ -197,7 +234,7 @@ backup_restore() {
 
 # Clean old backups (keep last N)
 backup_clean() {
-    local keep="${1:-10}"
+    local keep="${1:-$DEFAULT_BACKUP_KEEP}"
 
     log_info "Cleaning old backups (keeping last $keep)..."
 

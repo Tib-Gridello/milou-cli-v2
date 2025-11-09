@@ -3,10 +3,63 @@
 # Guides users through initial configuration
 
 source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/ssl.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/docker.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/ghcr.sh"
+# ssl.sh, docker.sh, env.sh, ghcr.sh, version.sh are loaded by main script
+
+#=============================================================================
+# Helpers
+#=============================================================================
+
+validate_email() {
+    local email="$1"
+    [[ "$email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]
+}
+
+setup_auto_yes() {
+    [[ "${MILOU_SETUP_ASSUME_YES:-false}" == "true" ]]
+}
+
+setup_usage() {
+    cat <<EOF
+Usage: milou setup [options] [command]
+
+Commands:
+    env                 Run environment configuration only
+    ssl                 Run SSL configuration only
+
+Options:
+    -y, --yes           Run non-interactively using defaults (or env overrides)
+    --no-pull           Skip pulling Docker images during setup
+    -h, --help          Show this help message
+EOF
+}
+
+setup_prompt_value() {
+    local env_var="$1"
+    local question="$2"
+    local default="$3"
+    local validator="${4:-}"
+    local error_message="${5:-Invalid value provided}"
+
+    local provided="${!env_var:-}"
+    if [[ -n "$provided" ]]; then
+        if [[ -n "$validator" ]] && ! "$validator" "$provided"; then
+            die "$error_message"
+        fi
+        log_info "Using ${env_var} from environment"
+        echo "$provided"
+        return 0
+    fi
+
+    while true; do
+        local value
+        value=$(prompt "$question" "$default")
+        if [[ -z "$validator" ]] || "$validator" "$value"; then
+            echo "$value"
+            return 0
+        fi
+        log_warn "$error_message"
+    done
+}
 
 #=============================================================================
 # Setup Wizard
@@ -17,6 +70,15 @@ prompt() {
     local question="$1"
     local default="${2:-}"  # Fix: Handle unbound variable
     local response
+
+    if setup_auto_yes; then
+        if [[ -n "$default" ]]; then
+            log_debug "Auto-selecting default for '$question': $default"
+            echo "$default"
+            return 0
+        fi
+        die "Cannot auto-answer '$question' without a default. Provide environment overrides or rerun interactively."
+    fi
 
     if [[ -n "$default" ]]; then
         read -e -p "$(log_color "$BLUE" "?") $question [$default]: " response
@@ -31,27 +93,16 @@ prompt() {
 prompt_yn() {
     local question="$1"
     local default="${2:-n}"
-    local response
+    if setup_auto_yes; then
+        if [[ "${default,,}" == "y" ]]; then
+            log_debug "Auto-selecting 'yes' for: $question"
+            return 0
+        fi
+        log_debug "Auto-selecting 'no' for: $question"
+        return 1
+    fi
 
-    local prompt_text="$question [y/N]"
-    [[ "$default" == "y" ]] && prompt_text="$question [Y/n]"
-
-    while true; do
-        read -p "$(log_color "$BLUE" "?") $prompt_text: " response
-        response="${response:-$default}"
-
-        case "$response" in
-            [Yy]|[Yy][Ee][Ss])
-                return 0
-                ;;
-            [Nn]|[Nn][Oo])
-                return 1
-                ;;
-            *)
-                log_warn "Please answer yes or no"
-                ;;
-        esac
-    done
+    confirm "$question" "${default^^}"
 }
 
 # Setup environment file
@@ -70,51 +121,45 @@ setup_env() {
 
         # Migrate in case new variables are needed
         env_migrate "$env_file"
+        verify_perms "$env_file" "600"
 
         log_success "Using existing configuration"
         return 0
     fi
 
-    # Get environment type
-    local node_env="production"
-    if prompt_yn "Is this a development environment?" "n"; then
-        node_env="development"
+    # Get environment type (allow override via MILOU_SETUP_NODE_ENV)
+    local node_env="${MILOU_SETUP_NODE_ENV:-}"
+    if [[ -n "$node_env" ]]; then
+        case "${node_env,,}" in
+            dev|development)
+                node_env="development"
+                ;;
+            prod|production)
+                node_env="production"
+                ;;
+            *)
+                die "Invalid MILOU_SETUP_NODE_ENV value: $node_env (use development or production)"
+                ;;
+        esac
+        log_info "Using NODE_ENV from MILOU_SETUP_NODE_ENV: $node_env"
+    else
+        node_env="production"
+        if prompt_yn "Is this a development environment?" "n"; then
+            node_env="development"
+        fi
     fi
 
     # Get domain
     local domain
-    while true; do
-        domain=$(prompt "Enter domain name" "localhost")
-        if validate_domain "$domain"; then
-            break
-        else
-            log_warn "Invalid domain name. Use alphanumeric characters, dots, and hyphens only."
-        fi
-    done
+    domain=$(setup_prompt_value \
+        "MILOU_SETUP_DOMAIN" \
+        "Enter domain name" \
+        "localhost" \
+        validate_domain \
+        "Invalid domain name. Use alphanumeric characters, dots, and hyphens only.")
 
     # Generate all secure credentials automatically
     log_info "Generating secure credentials for all services..."
-
-    # Database configuration (uses Docker service name)
-    local db_host="database"
-    local db_port="5432"
-    local db_name="milou"
-    local db_user="milou"
-    local db_pass=$(random_string 32 alphanumeric)
-    log_success "✓ Database password generated"
-
-    # Redis configuration (uses Docker service name)
-    local redis_host="redis"
-    local redis_port="6379"
-    local redis_pass=$(random_string 32 alphanumeric)
-    log_success "✓ Redis password generated"
-
-    # RabbitMQ configuration (uses Docker service name)
-    local rabbitmq_host="rabbitmq"
-    local rabbitmq_port="5672"
-    local rabbitmq_user="milou"
-    local rabbitmq_pass=$(random_string 32 alphanumeric)
-    log_success "✓ RabbitMQ password generated"
 
     # Get admin user configuration
     echo ""
@@ -122,22 +167,13 @@ setup_env() {
     log_info "Creating the first administrator account for Milou"
     echo ""
 
-    local admin_email="admin@localhost"
-
-    # Only prompt if interactive
-    if [[ -t 0 ]]; then
-        while true; do
-            local input_email=$(prompt "Admin email address" "admin@localhost")
-            if [[ "$input_email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-                admin_email="$input_email"
-                break
-            else
-                log_warn "Invalid email format. Please enter a valid email address."
-            fi
-        done
-    else
-        log_info "Using default admin email: $admin_email"
-    fi
+    local admin_email
+    admin_email=$(setup_prompt_value \
+        "MILOU_SETUP_ADMIN_EMAIL" \
+        "Admin email address" \
+        "admin@localhost" \
+        validate_email \
+        "Invalid email format. Please enter a valid email address.")
 
     local admin_password=$(random_string 16 alphanumeric)
     log_info "Generated secure admin password"
@@ -148,108 +184,70 @@ setup_env() {
     log_info "A token is required to pull Milou images from ghcr.io"
     echo ""
 
-    local ghcr_token=""
-    if prompt_yn "Do you have a GHCR token?" "y"; then
-        while true; do
-            read -s -p "$(log_color "$BLUE" "Enter GHCR token: ")" ghcr_token || true
-            echo ""
+    local ghcr_token="${MILOU_SETUP_GHCR_TOKEN:-}"
+    if [[ -n "$ghcr_token" ]]; then
+        log_info "Using GHCR token provided via environment variable"
+        if ! ghcr_validate_token "$ghcr_token"; then
+            die "Provided GHCR token is invalid. Check MILOU_SETUP_GHCR_TOKEN."
+        fi
+    else
+        if setup_auto_yes; then
+            log_warn "Skipping GHCR authentication (non-interactive and no token provided)"
+        elif prompt_yn "Do you have a GHCR token?" "y"; then
+            while true; do
+                read -s -p "$(log_color "$BLUE" "Enter GHCR token: ")" ghcr_token || true
+                echo ""
 
-            if [[ -n "$ghcr_token" ]]; then
+                if [[ -z "$ghcr_token" ]]; then
+                    log_warn "No token provided - you'll need to login manually later"
+                    break
+                fi
+
                 if ghcr_validate_token "$ghcr_token"; then
                     log_success "Token validated"
                     break
-                else
-                    log_error "Invalid token"
-                    if ! prompt_yn "Try again?" "y"; then
-                        ghcr_token=""
-                        break
-                    fi
                 fi
-            else
-                log_warn "No token provided - you'll need to login manually later"
-                break
-            fi
-        done
-    else
-        log_warn "Skipping GHCR authentication - you can set it up later with 'milou ghcr setup'"
+
+                log_error "Invalid token"
+                if ! prompt_yn "Try again?" "y"; then
+                    ghcr_token=""
+                    break
+                fi
+            done
+        else
+            log_warn "Skipping GHCR authentication - you can set it up later with 'milou ghcr setup'"
+        fi
     fi
 
+    # Generate base file from template (random secrets handled there)
+    env_generate "$env_file"
+
     # Determine ENGINE_URL based on environment
-    local engine_url="http://engine:8089"
-    [[ "$node_env" == "development" ]] && engine_url="http://localhost:8089"
+    local engine_url="$ENGINE_URL_PRODUCTION"
+    [[ "$node_env" == "development" ]] && engine_url="$ENGINE_URL_DEVELOPMENT"
 
-    # Generate secrets
-    local jwt_secret=$(random_string 64 hex)
-    local session_secret=$(random_string 64 hex)
-    local encryption_key=$(random_string 64 hex)
+    # Compute actual DATABASE_URI using generated credentials
+    local db_user=$(env_get_or_default "DB_USER" "milou" "$env_file")
+    local db_pass=$(env_get_or_default "DB_PASSWORD" "" "$env_file")
+    local db_host=$(env_get_or_default "DB_HOST" "database" "$env_file")
+    local db_port=$(env_get_or_default "DB_PORT" "5432" "$env_file")
+    local db_name=$(env_get_or_default "DB_NAME" "milou" "$env_file")
+    local database_uri="postgresql://${db_user}:${db_pass}@${db_host}:${db_port}/${db_name}"
 
-    # Build .env content
-    local env_content="# Milou Environment Configuration
-# Generated on $(date)
-# ========================================
+    env_set_many "$env_file" \
+        NODE_ENV "$node_env" \
+        DOMAIN "$domain" \
+        ENGINE_URL "$engine_url" \
+        ADMIN_EMAIL "$admin_email" \
+        DATABASE_URI "$database_uri"
 
-# Environment
-NODE_ENV=${node_env}
-DOMAIN=${domain}
-
-# Database Configuration
-DATABASE_URI=postgresql://${db_user}:${db_pass}@${db_host}:${db_port}/${db_name}
-DB_HOST=${db_host}
-DB_PORT=${db_port}
-DB_NAME=${db_name}
-DB_USER=${db_user}
-DB_PASSWORD=${db_pass}
-
-# PostgreSQL Container Configuration
-POSTGRES_USER=${db_user}
-POSTGRES_PASSWORD=${db_pass}
-POSTGRES_DB=${db_name}
-
-# Redis Configuration
-REDIS_HOST=${redis_host}
-REDIS_PORT=${redis_port}
-REDIS_PASSWORD=${redis_pass}
-
-# RabbitMQ Configuration
-RABBITMQ_HOST=${rabbitmq_host}
-RABBITMQ_PORT=${rabbitmq_port}
-RABBITMQ_USER=${rabbitmq_user}
-RABBITMQ_PASSWORD=${rabbitmq_pass}
-RABBITMQ_ERLANG_COOKIE=$(random_string 32 alphanumeric)
-RABBITMQ_URL=amqp://${rabbitmq_user}:${rabbitmq_pass}@${rabbitmq_host}:${rabbitmq_port}
-
-# Engine Configuration
-ENGINE_URL=${engine_url}
-
-# GitHub Container Registry
-GHCR_TOKEN=${ghcr_token}
-
-# Security
-JWT_SECRET=${jwt_secret}
-SESSION_SECRET=${session_secret}
-ENCRYPTION_KEY=${encryption_key}
-
-# Admin User
-ADMIN_EMAIL=${admin_email}
-ADMIN_PASSWORD=${admin_password}
-ADMIN_USERNAME=admin
-
-# Application
-PORT=3000
-LOG_LEVEL=info
-"
-
-    # Write atomically with 600 permissions
-    atomic_write "$env_file" "$env_content" "600"
-
-    log_success "Environment file created: $env_file"
-    log_warn "Credentials have been generated. Keep .env secure (600 permissions)."
-
+    # Ensure admin password matches the one we generated for display
+    env_set "ADMIN_PASSWORD" "$admin_password" "$env_file"
+    env_set "ADMIN_USERNAME" "admin" "$env_file"
 
     # Login to GHCR if token was provided
     if [[ -n "$ghcr_token" ]]; then
         echo ""
-        # Store the GHCR token in .env for future use
         if env_set "GHCR_TOKEN" "$ghcr_token" "$env_file"; then
             log_success "Stored GHCR token for future version checks"
         fi
@@ -257,72 +255,30 @@ LOG_LEVEL=info
         if ghcr_login "$ghcr_token" "false"; then
             log_success "GHCR authentication successful"
 
-            # Query available versions from multiple sources
             log_info "Determining latest version..."
-
-            # Try GitHub releases first (most authoritative)
-            local selected_version=""
-
-            # First try GitHub releases API (works for system version)
-            source "$(dirname "${BASH_SOURCE[0]}")/version.sh"
+            local selected_version
             selected_version=$(version_get_latest)
 
-            # If that fails, try GHCR API (package versions)
             if [[ -z "$selected_version" ]]; then
-                selected_version=$(ghcr_get_latest_version "backend" "$ghcr_token" 2>/dev/null || echo "")
+                selected_version="latest"
+                log_info "Using 'latest' tag (Docker will pull newest)"
             fi
 
-            # If we got a version, use it
-            if [[ -n "$selected_version" && "$selected_version" != "latest" ]]; then
-                echo ""
-                log_info "Latest stable version available: $selected_version"
-
-                if prompt_yn "Use latest stable version ($selected_version)?" "y"; then
-                    log_success "Selected version: $selected_version"
-                else
-                    # User declined, but still try to get a specific version
-                    log_info "Checking for other available versions..."
-                    local alt_version=$(ghcr_get_versions "backend" "$ghcr_token" 2>/dev/null | head -1)
-                    if [[ -n "$alt_version" && "$alt_version" != "latest" ]]; then
-                        selected_version="$alt_version"
-                        log_info "Using alternative version: $selected_version"
-                    else
-                        # As absolute last resort, use the known latest
-                        selected_version="1.0.14"
-                        log_info "Using known stable version: $selected_version"
-                    fi
-                fi
-            else
-                # Could not determine version automatically, use known latest
-                selected_version="1.0.14"
-                log_info "Using known stable version: $selected_version"
-            fi
-
-            # Always set a specific version, never "latest"
-            if [[ -n "$selected_version" && "$selected_version" != "latest" ]]; then
-                if env_set "MILOU_VERSION" "$selected_version" "$env_file"; then
-                    log_success "Set MILOU_VERSION=$selected_version in .env"
-                fi
-            else
-                # This should never happen with our logic above, but just in case
-                if env_set "MILOU_VERSION" "1.0.14" "$env_file"; then
-                    log_success "Set MILOU_VERSION=1.0.14 in .env"
-                fi
-            fi
+            env_set "MILOU_VERSION" "$selected_version" "$env_file"
+            log_success "Set MILOU_VERSION=$selected_version"
         else
             log_warn "GHCR authentication failed - you can retry with 'milou ghcr login'"
-            # Even if GHCR login fails, set a proper version
-            if env_set "MILOU_VERSION" "1.0.14" "$env_file"; then
-                log_success "Set MILOU_VERSION=1.0.14 in .env"
-            fi
+            env_set "MILOU_VERSION" "latest" "$env_file"
+            log_success "Set MILOU_VERSION=latest"
         fi
     else
-        # No token provided, still set a proper version
-        log_info "No GitHub token provided, using default version"
-        if env_set "MILOU_VERSION" "1.0.14" "$env_file"; then
-            log_success "Set MILOU_VERSION=1.0.14 in .env"
-        fi
+        log_info "No GitHub token provided, using 'latest' tag"
+        env_set "MILOU_VERSION" "latest" "$env_file"
+        log_success "Set MILOU_VERSION=latest"
     fi
+
+    log_success "Environment file created: $env_file"
+    log_warn "Credentials have been generated. Keep .env secure (600 permissions)."
 
     return 0
 }
@@ -366,36 +322,10 @@ setup_ssl() {
 
         ssl_import "$cert_path" "$key_path" "$ca_path"
     else
-        local domain=$(env_get "DOMAIN" 2>/dev/null || echo "localhost")
+        local domain=$(env_get_or_default "DOMAIN" "localhost")
         log_info "Generating self-signed certificate for $domain..."
         ssl_generate_self_signed "$domain" 365
         log_warn "Using self-signed certificate. Consider obtaining a proper SSL certificate for production."
-    fi
-
-    return 0
-}
-
-# Setup Docker
-setup_docker() {
-    log_info "Checking Docker installation..."
-
-    if ! docker_check 2>/dev/null; then
-        log_error "Docker is not installed or not running"
-        log_info "Please install Docker and Docker Compose:"
-        log_info "  https://docs.docker.com/get-docker/"
-
-        if prompt_yn "Continue without Docker?" "n"; then
-            log_warn "Skipping Docker setup"
-            return 0
-        else
-            die "Docker is required for Milou"
-        fi
-    fi
-
-    log_success "Docker is ready"
-
-    if prompt_yn "Pull Docker images now?" "y"; then
-        docker_pull
     fi
 
     return 0
@@ -418,8 +348,8 @@ install_docker_minimal() {
 
         # Start Docker
         log_info "Starting Docker service..."
-        systemctl start docker 2>/dev/null || true
-        systemctl enable docker 2>/dev/null || true
+        systemctl start docker 2>/dev/null || log_warn "Could not start Docker service"
+        systemctl enable docker 2>/dev/null || log_warn "Could not enable Docker service"
 
         # Install docker-compose plugin
         log_info "Installing Docker Compose plugin..."
@@ -549,24 +479,37 @@ setup() {
     setup_env
 
     # Save admin credentials for later display
-    local admin_email=$(env_get "ADMIN_EMAIL" 2>/dev/null || echo "")
-    local admin_password=$(env_get "ADMIN_PASSWORD" 2>/dev/null || echo "")
+    local admin_email=$(env_get_or_default "ADMIN_EMAIL" "")
+    local admin_password=$(env_get_or_default "ADMIN_PASSWORD" "")
 
     log_step 3 $total_steps "SSL Certificate Setup"
     setup_ssl
 
     log_step 4 $total_steps "Pulling Docker Images"
     if docker_check 2>/dev/null; then
-        log_info "Pulling Docker images..."
-        echo ""
-        # Source docker module if needed
-        source "$(dirname "${BASH_SOURCE[0]}")/docker.sh" 2>/dev/null || true
-        if docker_pull; then
-            echo ""
-            log_success "Docker images pulled successfully"
+        if [[ "${MILOU_SETUP_SKIP_PULL:-false}" == "true" ]]; then
+            log_info "Skipping Docker image pull (--no-pull)"
         else
-            echo ""
-            log_warn "Could not pull images - will pull on first start"
+            local pull_now="true"
+            if ! setup_auto_yes; then
+                if ! prompt_yn "Pull Docker images now?" "y"; then
+                    pull_now="false"
+                fi
+            fi
+
+            if [[ "$pull_now" == "true" ]]; then
+                log_info "Pulling Docker images..."
+                echo ""
+                if docker_pull; then
+                    echo ""
+                    log_success "Docker images pulled successfully"
+                else
+                    echo ""
+                    log_warn "Could not pull images - will pull on first start"
+                fi
+            else
+                log_info "Skipping Docker image pull (will pull on first start)"
+            fi
         fi
     else
         log_warn "Docker not available - images will be pulled on first start"
@@ -600,9 +543,6 @@ setup() {
     if prompt_yn "Would you like to start Milou services now?" "y"; then
         echo ""
 
-        # Source docker module for all operations
-        source "$(dirname "${BASH_SOURCE[0]}")/docker.sh" 2>/dev/null || true
-
         # Run database migrations first (required for fresh install)
         log_info "Running database migrations..."
         if db_migrate; then
@@ -615,7 +555,7 @@ setup() {
         log_info "Starting Milou services..."
 
         # Get domain from env for display
-        local domain=$(env_get "DOMAIN" "${SCRIPT_DIR}/.env" 2>/dev/null || echo "localhost")
+        local domain=$(env_get_or_default "DOMAIN" "localhost" "${SCRIPT_DIR}/.env")
 
         if docker_start; then
             echo ""
@@ -646,23 +586,55 @@ setup() {
 
 # Command handler for 'milou setup' operations
 setup_manage() {
-    local action="${1:-}"
+    local assume_yes="${MILOU_SETUP_ASSUME_YES:-false}"
+    local skip_pull="${MILOU_SETUP_SKIP_PULL:-false}"
+    local action=""
+    local -a action_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -y|--yes)
+                assume_yes="true"
+                shift
+                ;;
+            --no-pull)
+                skip_pull="true"
+                shift
+                ;;
+            -h|--help)
+                setup_usage
+                return 0
+                ;;
+            env|ssl)
+                action="$1"
+                shift
+                action_args=("$@")
+                break
+                ;;
+            -*)
+                die "Unknown setup option: $1"
+                ;;
+            *)
+                log_warn "Unknown setup argument: '$1' - ignoring"
+                shift
+                ;;
+        esac
+    done
+
+    export MILOU_SETUP_ASSUME_YES="$assume_yes"
+    export MILOU_SETUP_SKIP_PULL="$skip_pull"
 
     case "$action" in
         env)
-            shift
-            setup_env "$@"
+            setup_env "${action_args[@]}"
             ;;
         ssl)
-            shift
-            setup_ssl "$@"
+            setup_ssl "${action_args[@]}"
             ;;
         "")
-            # No sub-command - run main setup
             setup
             ;;
         *)
-            # Unknown option - show warning and run setup
             log_warn "Unknown setup option: '$action' - running main setup"
             setup
             ;;

@@ -5,6 +5,13 @@
 source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
 
 #=============================================================================
+# Constants
+#=============================================================================
+
+ENGINE_URL_PRODUCTION="http://engine:8089"
+ENGINE_URL_DEVELOPMENT="http://localhost:8089"
+
+#=============================================================================
 # Environment File Operations
 #=============================================================================
 
@@ -14,14 +21,56 @@ env_get() {
     local env_file="${2:-${SCRIPT_DIR}/.env}"
 
     [[ -f "$env_file" ]] || die "Environment file not found: $env_file"
+    [[ -n "$key" ]] || die "Key cannot be empty"
 
-    # Extract value, handle comments and whitespace
-    local value=$(grep "^${key}=" "$env_file" | head -n1 | cut -d= -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    local value
+    value=$(awk -v key="$key" '
+        BEGIN { FS="=" }
+        {
+            line=$0
+            trimmed=line
+            sub(/^[[:space:]]+/, "", trimmed)
+
+            if (trimmed ~ /^[#;]/ || trimmed == "") {
+                next
+            }
+
+            if (index(trimmed, "=") == 0) {
+                next
+            }
+
+            split(trimmed, parts, "=")
+            current=parts[1]
+            sub(/[[:space:]]+$/, "", current)
+
+            if (current == key) {
+                sub(/^[^=]+= */, "", trimmed)
+                print trimmed
+                exit
+            }
+        }
+    ' "$env_file")
 
     echo "$value"
 }
 
-# Set value in .env file atomically
+# Get value from .env file with default value
+env_get_or_default() {
+    local key="$1"
+    local default="${2:-}"
+    local env_file="${3:-${SCRIPT_DIR}/.env}"
+
+    local value
+    value=$(env_get "$key" "$env_file" 2>/dev/null || true)
+
+    if [[ -z "$value" ]]; then
+        echo "$default"
+    else
+        echo "$value"
+    fi
+}
+
+# Set value in .env file atomically (preserves comments/ordering)
 env_set() {
     local key="$1"
     local value="$2"
@@ -32,27 +81,145 @@ env_set() {
 
     log_debug "Setting $key in $env_file"
 
-    # Read current content
-    local content=$(cat "$env_file")
+    local tmp_file
+    tmp_file=$(mktemp) || die "Failed to create temp file"
 
-    # Check if key exists
-    if grep -q "^${key}=" "$env_file"; then
-        # Replace existing key
-        content=$(echo "$content" | sed "s|^${key}=.*|${key}=${value}|")
-    else
-        # Append new key
-        if [[ -n "$content" ]]; then
-            content="${content}
-${key}=${value}"
-        else
-            content="${key}=${value}"
-        fi
+    if ! awk -v key="$key" -v val="$value" '
+        BEGIN { updated=0 }
+        {
+            line=$0
+            trimmed=line
+            sub(/^[[:space:]]+/, "", trimmed)
+
+            if (trimmed ~ /^[#;]/ || trimmed == "") {
+                print line
+                next
+            }
+
+            if (index(trimmed, "=") == 0) {
+                print line
+                next
+            }
+
+            split(trimmed, parts, "=")
+            current=parts[1]
+            sub(/[[:space:]]+$/, "", current)
+
+            if (current == key) {
+                print key "=" val
+                updated=1
+            } else {
+                print line
+            }
+        }
+        END {
+            if (!updated) {
+                print key "=" val
+            }
+        }
+    ' "$env_file" > "$tmp_file"; then
+        rm -f "$tmp_file"
+        die "Failed to update environment file"
     fi
 
-    # Write atomically with 600 permissions
-    atomic_write "$env_file" "$content" "600"
+    chmod 600 "$tmp_file" || {
+        rm -f "$tmp_file"
+        die "Failed to set permissions on temp file"
+    }
+
+    mv "$tmp_file" "$env_file" || {
+        rm -f "$tmp_file"
+        die "Failed to update environment file"
+    }
+
+    verify_perms "$env_file" "600"
 
     log_debug "Set $key successfully"
+    return 0
+}
+
+# Set multiple values atomically (single pass to avoid partial writes)
+env_set_many() {
+    local env_file="${1:-${SCRIPT_DIR}/.env}"
+    shift
+
+    [[ -f "$env_file" ]] || die "Environment file not found: $env_file"
+
+    local remaining="$#"
+    (( remaining % 2 == 0 )) || die "env_set_many requires key/value pairs"
+
+    local pair_delim=$'\034'
+    local -a pairs=()
+
+    while [[ $# -gt 0 ]]; do
+        local key="$1"
+        local value="$2"
+        [[ -n "$key" ]] || die "Key cannot be empty"
+        pairs+=("$key${pair_delim}$value")
+        shift 2
+    done
+
+    if [[ ${#pairs[@]} -eq 0 ]]; then
+        log_debug "env_set_many called with no key/value pairs"
+        return 0
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp) || die "Failed to create temp file"
+
+    if ! awk -v pair_delim="$pair_delim" '
+        BEGIN {
+            for (i = 2; i < ARGC; i++) {
+                split(ARGV[i], parts, pair_delim)
+                updates[parts[1]] = parts[2]
+                delete ARGV[i]
+            }
+        }
+        {
+            line = $0
+            trimmed = line
+            sub(/^[[:space:]]+/, "", trimmed)
+
+            if (trimmed ~ /^[#;]/ || trimmed == "" || index(trimmed, "=") == 0) {
+                print line
+                next
+            }
+
+            split(trimmed, parts, "=")
+            current = parts[1]
+            sub(/[[:space:]]+$/, "", current)
+
+            if (current in updates) {
+                print current "=" updates[current]
+                processed[current] = 1
+            } else {
+                print line
+            }
+        }
+        END {
+            for (key in updates) {
+                if (!(key in processed)) {
+                    print key "=" updates[key]
+                }
+            }
+        }
+    ' "$env_file" "${pairs[@]}" > "$tmp_file"; then
+        rm -f "$tmp_file"
+        die "Failed to update environment file"
+    fi
+
+    chmod 600 "$tmp_file" || {
+        rm -f "$tmp_file"
+        die "Failed to set permissions on temp file"
+    }
+
+    mv "$tmp_file" "$env_file" || {
+        rm -f "$tmp_file"
+        die "Failed to update environment file"
+    }
+
+    verify_perms "$env_file" "600"
+    log_debug "Updated ${#pairs[@]} values in $env_file"
     return 0
 }
 
@@ -102,9 +269,9 @@ env_generate() {
 
     # Set ENGINE_URL based on environment
     if [[ "${NODE_ENV:-development}" == "production" ]]; then
-        content=$(echo "$content" | sed "s|REPLACE_ENGINE_URL|http://engine:8089|g")
+        content=$(echo "$content" | sed "s|REPLACE_ENGINE_URL|${ENGINE_URL_PRODUCTION}|g")
     else
-        content=$(echo "$content" | sed "s|REPLACE_ENGINE_URL|http://localhost:8089|g")
+        content=$(echo "$content" | sed "s|REPLACE_ENGINE_URL|${ENGINE_URL_DEVELOPMENT}|g")
     fi
 
     # Write atomically with 600 permissions
@@ -124,7 +291,7 @@ env_validate() {
 
     [[ -f "$env_file" ]] || die "Environment file not found: $env_file"
 
-    # Verify permissions
+    # Verify permissions (atomic_write sets them, but verify for safety)
     verify_perms "$env_file" "600"
 
     # Check required keys
@@ -179,11 +346,11 @@ env_migrate() {
         log_info "Adding ENGINE_URL to environment file..."
 
         # Determine value based on NODE_ENV
-        local default_engine_url="http://engine:8089"
+        local default_engine_url="$ENGINE_URL_PRODUCTION"
         local node_env=$(env_get "NODE_ENV" "$env_file")
 
         if [[ "$node_env" == "development" ]]; then
-            default_engine_url="http://localhost:8089"
+            default_engine_url="$ENGINE_URL_DEVELOPMENT"
         fi
 
         # Add ENGINE_URL after RABBITMQ section

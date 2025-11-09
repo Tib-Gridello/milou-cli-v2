@@ -3,7 +3,7 @@
 # Clean approach: local has version number, check manifest for latest
 
 source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
-source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+# env.sh is loaded by main script
 
 #=============================================================================
 # Configuration
@@ -11,8 +11,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 GITHUB_ORG="${GITHUB_ORG:-milou-sh}"
 GITHUB_REPO="${GITHUB_REPO:-milou}"
-# Use all releases endpoint since /latest might not work for all repos
-MANIFEST_URL="https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases"
+
+# Default version fallback (used when version cannot be determined)
+DEFAULT_MILOU_VERSION="${DEFAULT_MILOU_VERSION:-1.0.14}"
 
 #=============================================================================
 # Version Check Functions
@@ -20,73 +21,119 @@ MANIFEST_URL="https://api.github.com/repos/$GITHUB_ORG/$GITHUB_REPO/releases"
 
 # Get current version from .env
 version_get_current() {
-    local version=$(env_get "MILOU_VERSION" 2>/dev/null || echo "")
-
-    # If version is not set or is "latest", try to resolve it
-    if [[ -z "$version" || "$version" == "latest" ]]; then
-        # Try to get the actual latest version
-        local latest=$(version_get_latest)
-        if [[ -n "$latest" ]]; then
-            version="$latest"
-            # Update the .env file with the resolved version
-            env_set "MILOU_VERSION" "$version" 2>/dev/null || true
-            log_info "Resolved MILOU_VERSION to $version"
-        else
-            # If we still can't determine version, use the template default
-            version="1.0.14"  # Current latest as of now
-            log_info "Using default version: $version"
-        fi
-    fi
-
+    local version=$(env_get_or_default "MILOU_VERSION" "")
+    [[ -z "$version" ]] && version="$DEFAULT_MILOU_VERSION"
     echo "$version"
 }
 
-# Get latest version from GHCR (our source of truth for Docker images)
-version_get_latest() {
-    # Try to get GHCR token from .env if available
-    local ghcr_token=$(env_get "GHCR_TOKEN" 2>/dev/null || echo "")
+# Resolve "latest" to actual version (no side effects - doesn't update .env)
+version_resolve_latest() {
+    local current=$(env_get_or_default "MILOU_VERSION" "")
+    
+    # If version is set and not "latest", return it
+    [[ -n "$current" && "$current" != "latest" ]] && echo "$current" && return 0
+    
+    # Try to get the actual latest version
+    local latest=$(version_get_latest)
+    [[ -n "$latest" ]] && echo "$latest" && return 0
+    
+    # Fallback to default
+    echo "$DEFAULT_MILOU_VERSION"
+}
 
-    if [[ -z "$ghcr_token" ]]; then
-        log_debug "No GHCR token available for GHCR API"
-        echo ""
-        return 1
+# Cache for API responses (5 minute TTL)
+_VERSION_CACHE_VALUE=""
+_VERSION_CACHE_TIME=0
+VERSION_CACHE_TTL=300
+
+version_fetch_latest_release() {
+    local api="https://api.github.com/repos/${GITHUB_ORG}/${GITHUB_REPO}/releases/latest"
+    local curl_opts=(-sS -L -H "Accept: application/vnd.github+json")
+    local token="${GITHUB_TOKEN:-}"
+    [[ -z "$token" ]] && token=$(env_get_or_default "GHCR_TOKEN" "")
+
+    if [[ -n "$token" ]]; then
+        curl_opts+=(-H "Authorization: Bearer $token")
     fi
 
-    # Use GHCR API to get versions for backend (as reference service)
+    local response
+    response=$(curl "${curl_opts[@]}" "$api" 2>/dev/null || true)
+    [[ -z "$response" ]] && return 1
+
+    local latest=""
+    if command -v jq >/dev/null 2>&1; then
+        latest=$(echo "$response" | jq -r '.tag_name // empty')
+    else
+        latest=$(echo "$response" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | cut -d'"' -f4)
+    fi
+
+    [[ -n "$latest" ]] || return 1
+
+    echo "$latest"
+    return 0
+}
+
+version_fetch_latest_from_ghcr() {
+    local token="${1:-}"
+
+    [[ -z "$token" ]] && token=$(env_get_or_default "GHCR_TOKEN" "")
+    [[ -z "$token" ]] && return 1
+
     local ghcr_url="https://api.github.com/orgs/${GITHUB_ORG}/packages/container/milou%2Fbackend/versions"
-    local response=$(curl -s -H "Authorization: Bearer $ghcr_token" "$ghcr_url" 2>/dev/null || echo "")
+    local response=$(curl -s -H "Authorization: Bearer $token" "$ghcr_url" 2>/dev/null || true)
 
     if [[ -z "$response" ]]; then
         log_debug "No response from GHCR API"
-        echo ""
         return 1
     fi
 
-    # Check for error messages
     if echo "$response" | grep -q '"message".*"Not Found"'; then
         log_debug "GHCR package not accessible"
-        echo ""
         return 1
     fi
 
-    # Extract semantic versions from tags, excluding "latest"
     local latest=""
     if command -v jq >/dev/null 2>&1; then
-        # Get all version tags and sort them
         latest=$(echo "$response" | jq -r '.[].metadata.container.tags[]' 2>/dev/null | \
                  grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | \
                  sort -V | tail -1)
     else
-        # Fallback without jq
         latest=$(echo "$response" | grep -o '"[0-9]\+\.[0-9]\+\.[0-9]\+"' | \
                  tr -d '"' | sort -V | tail -1)
     fi
 
+    [[ -n "$latest" ]] || return 1
+
+    echo "$latest"
+    return 0
+}
+
+# Get latest version (prefers GitHub releases, falls back to GHCR tags)
+# Uses caching to reduce API calls
+version_get_latest() {
+    local now=$(date +%s)
+
+    if [[ -n "$_VERSION_CACHE_VALUE" ]] && [[ $((now - _VERSION_CACHE_TIME)) -lt $VERSION_CACHE_TTL ]]; then
+        log_debug "Using cached version: $_VERSION_CACHE_VALUE"
+        echo "$_VERSION_CACHE_VALUE"
+        return 0
+    fi
+
+    local latest=""
+    if latest=$(version_fetch_latest_release); then
+        log_debug "Resolved latest version via releases: $latest"
+    else
+        latest=$(version_fetch_latest_from_ghcr) || latest=""
+        [[ -n "$latest" ]] && log_debug "Resolved latest version via GHCR: $latest"
+    fi
+
     if [[ -z "$latest" ]]; then
-        log_debug "No semantic version found in GHCR"
         echo ""
         return 1
     fi
+
+    _VERSION_CACHE_VALUE="$latest"
+    _VERSION_CACHE_TIME=$now
 
     echo "$latest"
 }
@@ -127,6 +174,10 @@ version_check_updates() {
     [[ "$quiet" != "true" ]] && log_info "Checking for updates..."
 
     local current=$(version_get_current)
+    # Resolve "latest" if needed, but don't update .env
+    if [[ "$current" == "latest" ]] || [[ -z "$current" ]]; then
+        current=$(version_resolve_latest)
+    fi
     local latest=$(version_get_latest)
 
     if [[ -z "$latest" ]]; then
@@ -152,6 +203,10 @@ version_check_updates() {
 # Show version information
 version_show() {
     local current=$(version_get_current)
+    # Resolve "latest" if needed for display, but don't update .env
+    if [[ "$current" == "latest" ]] || [[ -z "$current" ]]; then
+        current=$(version_resolve_latest)
+    fi
     local latest=$(version_get_latest)
 
     echo "Milou Version Information"
