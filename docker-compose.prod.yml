@@ -3,9 +3,6 @@ version: '3.8'
 services:
   database:
     image: ghcr.io/milou-sh/milou/database:${MILOU_VERSION:-latest}
-    build:
-      context: ./docker/database
-      dockerfile: Dockerfile
     env_file:
       - ./.env
     volumes:
@@ -80,9 +77,6 @@ services:
 
   backend:
     image: ghcr.io/milou-sh/milou/backend:${MILOU_VERSION:-latest}
-    build:
-      context: ./dashboard
-      dockerfile: backend/Dockerfile.backend
     env_file:
       - ./.env
     environment:
@@ -113,9 +107,6 @@ services:
 
   frontend:
     image: ghcr.io/milou-sh/milou/frontend:${MILOU_VERSION:-latest}
-    build:
-      context: ./dashboard
-      dockerfile: frontend/Dockerfile.frontend
     env_file:
       - ./.env
     expose:
@@ -131,9 +122,6 @@ services:
 
   engine:
     image: ghcr.io/milou-sh/milou/engine:${MILOU_VERSION:-latest}
-    build:
-      context: ./engine
-      dockerfile: Dockerfile
     env_file:
       - ./.env
     environment:
@@ -162,7 +150,7 @@ services:
   # Only activated when explicitly called with: docker compose up database-migrations
   database-migrations:
     image: ghcr.io/milou-sh/milou/backend:${MILOU_VERSION:-latest}
-    container_name: milou-cli-v2-database-migrations
+    container_name: milou-cli-database-migrations
     profiles:
       - "database-migrations"
     entrypoint: ""
@@ -188,9 +176,6 @@ services:
   # The nginx service has been removed to avoid interference with Traefik.
   nginx:
     image: ghcr.io/milou-sh/milou/nginx:${MILOU_VERSION:-latest}
-    build:
-      context: ./docker/nginx
-      dockerfile: Dockerfile
     ports:
       - "80:80"
       - "443:443"

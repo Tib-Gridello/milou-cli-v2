@@ -1,6 +1,6 @@
 #!/bin/bash
-# Milou CLI v2 - Minimal Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/milou-sh/milou-cli-v2/main/install.sh | bash
+# Milou CLI Installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/milou-sh/milou-cli-installer/main/install.sh | bash
 set -e
 
 # Colors for output
@@ -10,9 +10,25 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Configuration
-REPO="${MILOU_REPO:-https://github.com/Tib-Gridello/milou-cli-v2}"
-BRANCH="${MILOU_BRANCH:-master}"
+REPO="${MILOU_REPO:-https://github.com/milou-sh/milou-cli-installer}"
+BRANCH="${MILOU_BRANCH:-main}"
 INSTALL_DIR="${MILOU_INSTALL_DIR:-/opt/milou}"
+
+banner() {
+    cat <<'BANNER'
+ __  __ ___ _     ___  _   _ 
+|  \/  |_ _| |   |_ _|| \ | |
+| |\/| || || |    | | |  \| |
+| |  | || || |___ | | | |\  |
+|_|  |_|___|_____|___||_| \_|
+
+  ____ _     ___ 
+ / ___| |   |_ _|
+| |   | |    | | 
+| |___| |___ | | 
+ \____|_____|___|
+BANNER
+}
 
 # Simple logging
 log() { echo -e "${BLUE}→${NC} $1"; }
@@ -184,7 +200,7 @@ confirm_overwrite() {
 
 # Download and install
 install() {
-    log "Installing Milou CLI v2 to $INSTALL_DIR..."
+    log "Installing Milou CLI to $INSTALL_DIR..."
 
     if [[ -d "$INSTALL_DIR" ]]; then
         confirm_overwrite
@@ -275,13 +291,14 @@ EOF
 # Main
 main() {
     echo ""
-    echo "Milou CLI v2 Installer"
-    echo "======================"
+    banner
+    echo "Milou CLI Installer"
+    echo "==================="
     echo ""
 
-check_deps
-ensure_docker
-setup_user
+    check_deps
+    ensure_docker
+    setup_user
     install
     setup_access
 
@@ -307,7 +324,7 @@ setup_user
         echo "  3. Run: milou start"
     fi
     echo ""
-    echo "Documentation: https://milou.sh/docs"
+    echo "Documentation: https://docs.milou.sh"
     echo ""
 }
 

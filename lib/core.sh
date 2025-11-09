@@ -1,5 +1,5 @@
 #!/bin/bash
-# core.sh - Core utilities for Milou CLI v2
+# core.sh - Core utilities for the Milou CLI
 # Logging, colors, error handling, common functions
 
 #=============================================================================

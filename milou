@@ -1,16 +1,18 @@
 #!/bin/bash
 # milou - Clean CLI tool for Milou management
-# Version: 2.0.0
+# Version: 1.0.0
 #
-# A complete rewrite focused on:
+# Focus areas:
 # - Security by default (600 permissions on .env, no silent failures)
 # - Atomic operations (temp + mv, never sed -i)
-# - Simplicity (96% size reduction from v1)
+# - Simplicity (just the tooling, no proprietary app code)
 # - Explicit error handling (die on error, no || true)
 
 # Use careful error handling instead of strict mode
 # set -e would cause exits on any non-zero return (breaks prompts)
 set -uo pipefail
+
+CLI_VERSION="${CLI_VERSION:-1.0.0}"
 
 #=============================================================================
 # Initialization
@@ -30,19 +32,33 @@ source "${SCRIPT_DIR}/lib/backup.sh"
 source "${SCRIPT_DIR}/lib/setup.sh"
 source "${SCRIPT_DIR}/lib/version.sh"
 
+milou_banner() {
+    cat <<'BANNER'
+ __  __ _____ _      ____  _    _ 
+|  \/  |_   _| |    / __ \| |  | |
+| \  / | | | | |   | |  | | |  | |
+| |\/| | | | | |   | |  | | |  | |
+| |  | |_| |_| |___| |__| | |__| |
+|_|  |_|_____|______\____/ \____/ 
+                                  
+                                  
+BANNER
+}
+
 #=============================================================================
 # Command Handlers
 #=============================================================================
 
 # Show help message
 show_help() {
+    milou_banner
     cat <<EOF
-Milou CLI v2.0.0 - Clean and secure Milou management tool
+Milou CLI ${CLI_VERSION} — secure management tooling for the Milou platform
 
 USAGE:
     milou <command> [options]
 
-COMMANDS:
+PRIMARY COMMANDS:
     setup                     Initial setup (generates .env, SSL, etc.)
     start                     Start Milou services
     stop                      Stop Milou services
@@ -81,7 +97,7 @@ COMMANDS:
     db <action>               Database operations
         migrate               Run database migrations
 
-    docker <action>           Docker operations
+    docker <action>           Docker helper passthrough
         start                 Start services
         stop                  Stop services
         restart               Restart services
@@ -92,7 +108,7 @@ COMMANDS:
         clean                 Clean up Docker resources
         update                Update and restart
 
-    version [action]          Version management
+    version [action]          Version management helpers
         show                  Show version information
         check                 Check for updates
         current               Show current version
@@ -108,20 +124,21 @@ EXAMPLES:
     milou update                      Update Milou to latest version
 
 DOCUMENTATION:
-    For more information, visit: https://milou.sh/docs
+    Full product docs live at https://docs.milou.sh. This repository focuses
+    on the installer + CLI workflow.
 
 EOF
 }
 
 # Show version
 show_version() {
+    milou_banner
     cat <<EOF
-Milou CLI v2.0.0
+Milou CLI ${CLI_VERSION}
 
-- 96% smaller than v1 (500 lines vs 13,275 lines)
-- Secure by default (600 permissions, no silent failures)
-- Atomic operations (no permission loss)
-- Explicit error handling (fail fast)
+- Hardened bash modules only (no proprietary Milou source)
+- Atomic ops and enforced permissions for .env + SSL
+- Requires paid GHCR access for application containers
 
 EOF
 }

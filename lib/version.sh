@@ -10,10 +10,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
 #=============================================================================
 
 GITHUB_ORG="${GITHUB_ORG:-milou-sh}"
-GITHUB_REPO="${GITHUB_REPO:-milou}"
+GITHUB_REPO="${GITHUB_REPO:-milou-cli-installer}"
 
 # Default version fallback (used when version cannot be determined)
-DEFAULT_MILOU_VERSION="${DEFAULT_MILOU_VERSION:-1.0.14}"
+DEFAULT_MILOU_VERSION="${DEFAULT_MILOU_VERSION:-1.0.0}"
+DEFAULT_CLI_VERSION="${DEFAULT_CLI_VERSION:-1.0.0}"
 
 #=============================================================================
 # Version Check Functions
@@ -208,10 +209,11 @@ version_show() {
         current=$(version_resolve_latest)
     fi
     local latest=$(version_get_latest)
+    local cli_version="${CLI_VERSION:-$DEFAULT_CLI_VERSION}"
 
     echo "Milou Version Information"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "CLI Version:     v2.0.0"
+    echo "CLI Version:     v$cli_version"
     echo "Current Images:  v$current"
 
     if [[ -n "$latest" ]]; then

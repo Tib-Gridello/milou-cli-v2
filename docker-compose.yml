@@ -3,9 +3,9 @@ version: '3.8'
 
 services:
   database:
-    build:
-      context: ./docker/database
-      dockerfile: Dockerfile
+    image: ghcr.io/milou-sh/milou/database:${MILOU_VERSION:-latest}
+    env_file:
+      - ./.env
     environment:
       POSTGRES_USER: secure
       POSTGRES_PASSWORD: secure
@@ -83,9 +83,7 @@ services:
     restart: unless-stopped
 
   backend:
-    build:
-      context: ./dashboard
-      dockerfile: backend/Dockerfile.backend
+    image: ghcr.io/milou-sh/milou/backend:${MILOU_VERSION:-latest}
     env_file:
       - ./.env
     environment:
@@ -113,8 +111,6 @@ services:
       - "traefik.http.routers.websocket.service=backend-socket-service"
       - "traefik.http.services.backend-socket-service.loadbalancer.server.port=9999"
       - "traefik.http.routers.websocket.priority=200"
-    volumes:
-      - ./dashboard:/app/dashboard
     depends_on:
       database:
         condition: service_healthy
@@ -134,9 +130,9 @@ services:
       start_period: 20s
 
   frontend:
-    build:
-      context: ./dashboard
-      dockerfile: frontend/Dockerfile.frontend
+    image: ghcr.io/milou-sh/milou/frontend:${MILOU_VERSION:-latest}
+    env_file:
+      - ./.env
     environment:
       - VITE_API_URL=/api
       - NODE_ENV=${NODE_ENV:-development}
@@ -155,9 +151,7 @@ services:
       - proxy
 
   engine:
-    build:
-      context: ./engine
-      dockerfile: Dockerfile
+    image: ghcr.io/milou-sh/milou/engine:${MILOU_VERSION:-latest}
     env_file:
       - ./.env
     environment:
@@ -184,9 +178,7 @@ services:
       start_period: 60s
 
   docs:
-    build:
-      context: ./docs/public
-      dockerfile: Dockerfile
+    image: ghcr.io/milou-sh/milou/docs:${MILOU_VERSION:-latest}
     container_name: milou-docs
     restart: unless-stopped
     expose:
@@ -212,13 +204,15 @@ services:
   # Runs migrations using the backend image, then exits
   # Only activated when explicitly called with: docker compose up database-migrations
   database-migrations:
-    image: ghcr.io/milou-sh/milou/backend:${MILOU_VERSION:-v1.0.0}
-    container_name: milou-cli-v2-database-migrations
+    image: ghcr.io/milou-sh/milou/backend:${MILOU_VERSION:-latest}
+    container_name: milou-cli-database-migrations
     profiles:
       - "database-migrations"
     entrypoint: ""
     command: |
       sh -c "npm run migration:run:prod --workspace=backend"
+    env_file:
+      - ./.env
     environment:
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URI=${DATABASE_URI}
