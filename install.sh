@@ -36,6 +36,52 @@ check_deps() {
     success "Dependencies OK"
 }
 
+install_docker_prereqs() {
+    log "Installing Docker Engine..."
+    if curl -fsSL https://get.docker.com | sh; then
+        success "Docker Engine installed"
+    else
+        error "Failed to install Docker Engine automatically"
+    fi
+
+    if systemctl list-units --type=service | grep -q docker.service 2>/dev/null; then
+        systemctl enable docker >/dev/null 2>&1 || true
+        systemctl start docker >/dev/null 2>&1 || true
+    fi
+
+    if ! docker compose version >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+        log "Installing docker compose plugin..."
+        if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq >/dev/null 2>&1 || true
+            if apt-get install -y docker-compose-plugin >/dev/null 2>&1; then
+                success "docker compose plugin installed"
+            else
+                log "Could not install docker compose plugin automatically. Install manually if needed."
+            fi
+        else
+            log "apt-get not available; install docker compose manually."
+        fi
+    else
+        success "docker compose already available"
+    fi
+}
+
+ensure_docker() {
+    if command -v docker >/dev/null 2>&1 && \
+       { command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2>&1; }; then
+        success "Docker prerequisites already installed"
+        return 0
+    fi
+
+    if [[ $EUID -ne 0 ]]; then
+        log "Docker is not installed and installer is not running as root."
+        log "Please install Docker manually: https://docs.docker.com/get-docker/"
+        return 0
+    fi
+
+    install_docker_prereqs
+}
+
 # Setup user and permissions
 setup_user() {
     # Check if we need root for default installation
@@ -233,8 +279,9 @@ main() {
     echo "======================"
     echo ""
 
-    check_deps
-    setup_user
+check_deps
+ensure_docker
+setup_user
     install
     setup_access
 

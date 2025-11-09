@@ -36,6 +36,8 @@ curl -fsSL https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/in
 wget -qO- https://raw.githubusercontent.com/Tib-Gridello/milou-cli-v2/master/install.sh | sudo bash
 ```
 
+> When the installer runs with sudo (recommended for `/opt/milou`), it now checks for Docker Engine + docker compose and installs them automatically using Docker's official convenience script on Debian/Ubuntu hosts. On custom, non-root installations you still need to install Docker yourself before running `milou setup`.
+
 This will:
 - Install to `/opt/milou`
 - Create a `milou` system user
