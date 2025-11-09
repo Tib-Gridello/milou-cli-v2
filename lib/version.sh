@@ -2,7 +2,10 @@
 # version.sh - Simple version management using GitHub releases manifest
 # Clean approach: local has version number, check manifest for latest
 
-source "$(dirname "${BASH_SOURCE[0]}")/core.sh"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${LIB_DIR}/.." && pwd)"
+
+source "${LIB_DIR}/core.sh"
 # env.sh is loaded by main script
 
 #=============================================================================
@@ -13,8 +16,14 @@ GITHUB_ORG="${GITHUB_ORG:-milou-sh}"
 GITHUB_REPO="${GITHUB_REPO:-milou-cli-installer}"
 
 # Default version fallback (used when version cannot be determined)
-DEFAULT_MILOU_VERSION="${DEFAULT_MILOU_VERSION:-1.0.0}"
-DEFAULT_CLI_VERSION="${DEFAULT_CLI_VERSION:-1.0.0}"
+VERSION_FILE="${ROOT_DIR}/VERSION"
+if [[ -f "$VERSION_FILE" ]]; then
+    DEFAULT_MILOU_VERSION="$(<"$VERSION_FILE")"
+    DEFAULT_CLI_VERSION="$DEFAULT_MILOU_VERSION"
+else
+    DEFAULT_MILOU_VERSION="${DEFAULT_MILOU_VERSION:-1.0.0}"
+    DEFAULT_CLI_VERSION="${DEFAULT_CLI_VERSION:-1.0.0}"
+fi
 
 #=============================================================================
 # Version Check Functions

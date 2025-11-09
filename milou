@@ -12,8 +12,6 @@
 # set -e would cause exits on any non-zero return (breaks prompts)
 set -uo pipefail
 
-CLI_VERSION="${CLI_VERSION:-1.0.0}"
-
 #=============================================================================
 # Initialization
 #=============================================================================
@@ -21,6 +19,16 @@ CLI_VERSION="${CLI_VERSION:-1.0.0}"
 # Determine script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SCRIPT_DIR
+
+# Determine CLI version (env var override > VERSION file > fallback)
+VERSION_FILE="${SCRIPT_DIR}/VERSION"
+if [[ -n "${CLI_VERSION:-}" ]]; then
+    CLI_VERSION="$CLI_VERSION"
+elif [[ -f "$VERSION_FILE" ]]; then
+    CLI_VERSION="$(<"$VERSION_FILE")"
+else
+    CLI_VERSION="0.0.0"
+fi
 
 # Load modules
 source "${SCRIPT_DIR}/lib/core.sh"

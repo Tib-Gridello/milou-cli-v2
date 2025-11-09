@@ -16,6 +16,8 @@
 
 Secure, scripted operations tooling for the Milou platform. The CLI itself is open source; Milou services stay proprietary and ship as GHCR images behind authentication.
 
+This repository contains **only** the installer, bash modules, and sample docker-compose definitions. The Milou applications and databases remain closed-source artifacts distributed through GHCR once you authenticate.
+
 - Hardened bash modules for setup, secrets management, SSL, Docker, GHCR, and backups
 - Single entrypoint (`milou`) with consistent UX for operators and CI
 - Works on any modern Linux host with Docker Engine + docker compose plugin installed
@@ -41,6 +43,7 @@ Secure, scripted operations tooling for the Milou platform. The CLI itself is op
 | Component | Details |
 |-----------|---------|
 | OS | 64-bit Linux with bash 4+, systemd recommended |
+| CLI tooling | `curl`, `tar`, `jq`, `openssl`, and `sudo` available in `$PATH` |
 | Docker | Docker Engine 24+ and docker compose plugin (the installer can auto-install on Debian/Ubuntu) |
 | Network | Outbound HTTPS to `github.com` + `ghcr.io` |
 | Credentials | *Required*: GitHub PAT with `read:packages` scope to pull Milou GHCR images |
@@ -57,6 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/milou-sh/milou-cli-installer/main/i
 - Installs into `/opt/milou`
 - Creates service user `milou` and wrapper `/usr/local/bin/milou`
 - Ensures Docker Engine + compose plugin exist (auto-installs on Debian/Ubuntu)
+- Verify downloads with the SHA256 checksum published alongside every GitHub release.
 
 ### Custom install (non-root)
 
@@ -66,6 +70,18 @@ curl -fsSL https://raw.githubusercontent.com/milou-sh/milou-cli-installer/main/i
 ```
 
 Adds the target directory to your shell `PATH` so you can run `milou` directly.
+
+> ℹ️ Need to run completely unprivileged? Download the tarball attached to every GitHub release and unpack it anywhere on your `$PATH`, then invoke `./milou setup --yes` with the required `MILOU_SETUP_*` values.
+
+## Open Source vs Proprietary Assets
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Installer CLI (`milou`, `lib/*.sh`, `install.sh`) | Open source (MIT) | Maintained in this repo |
+| Docker Compose files | Open source | Reference layouts; feel free to fork |
+| Milou application images (`ghcr.io/milou-sh/milou/*`) | Proprietary | Requires paid subscription + PAT |
+| Documentation portal | Public | https://docs.milou.sh |
+| Commercial support playbooks | Proprietary | Available through your contract |
 
 ## Quick Usage
 
@@ -141,15 +157,18 @@ Supply `MILOU_VERSION` (via `.env` or `milou config set`) to pin a release. `mil
 
 ## Project Status & Support
 
-- CLI code: open source here
+- CLI code: open source in this repository (MIT)
 - Milou platform services/images: closed source, distributed via GHCR (paid)
 - Documentation & onboarding guides: https://docs.milou.sh
+- Security policy: [SECURITY.md](SECURITY.md)
+- Support tiers: [SUPPORT.md](SUPPORT.md)
 
 For help:
 1. Run `milou help`
 2. Check `milou logs`
 3. Review `.env` + SSL permissions
-4. Contact the Milou team through your commercial support channel
+4. Open a GitHub issue (community)
+5. Contact the Milou team through your commercial support channel (customers)
 
 ## License
 
