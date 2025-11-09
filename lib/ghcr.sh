@@ -44,11 +44,12 @@ ghcr_validate_token() {
     log_debug "Validating GHCR token..."
 
     # Query packages endpoint which only requires read:packages scope
+    # Note: GitHub API requires package_type parameter (container, npm, maven, etc.)
     local status
     status=$(curl -s -o /dev/null -w "%{http_code}" \
         -H "Authorization: token $token" \
         -H "Accept: application/vnd.github+json" \
-        "${GHCR_API_BASE}/user/packages?per_page=1" 2>/dev/null || echo "000")
+        "${GHCR_API_BASE}/user/packages?package_type=container&per_page=1" 2>/dev/null || echo "000")
 
     if [[ "$status" == "200" ]]; then
         log_debug "Token accepted by GitHub Packages API"
